@@ -1,0 +1,17 @@
+{
+  "name": "jacu-fast",
+  "version": "0.0.1",
+  "description": "Workflow skill for complete, evidenced development. This version does not include the jacu command.",
+  "author": {
+    "name": "jacu-dev",
+    "url": "https://github.com/jacu-dev"
+  },
+  "homepage": "https://github.com/jacu-dev/jacu-fast",
+  "repository": "https://github.com/jacu-dev/jacu-fast",
+  "license": "MIT",
+  "keywords": [
+    "development",
+    "verification",
+    "productivity"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "jacu-fast",
+  "description": "Jacu Fast workflow skill. This release ships the skill only. The jacu command is not included.",
+  "owner": {
+    "name": "jacu-dev",
+    "url": "https://github.com/jacu-dev"
+  },
+  "plugins": [
+    {
+      "name": "jacu-fast",
+      "description": "Workflow skill for complete, evidenced development. This version does not include the jacu command.",
+      "version": "0.0.1",
+      "author": {
+        "name": "jacu-dev",
+        "url": "https://github.com/jacu-dev"
+      },
+      "homepage": "https://github.com/jacu-dev/jacu-fast",
+      "repository": "https://github.com/jacu-dev/jacu-fast",
+      "license": "MIT",
+      "keywords": [
+        "development",
+        "verification",
+        "productivity"
+      ],
+      "source": "./"
+    }
+  ]
+}

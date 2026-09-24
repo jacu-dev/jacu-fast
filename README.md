@@ -22,7 +22,14 @@ npx skills add jacu-dev/jacu-fast -g -y -a grok opencode cursor claude-code code
 
 `-g` puts the skill in your user directory, so it is available in every project. `--all` skips the prompts and selects every skill and every detected agent. Node is used only for that copy. Jacu does not run as a Node service.
 
-Start a new agent session after installing. Invoke the skill with `/jacu-fast` and the task. Claude Code namespaces plugin skills, so the same skill there is `/jacu-fast:jacu-fast` when it is loaded as a plugin. OpenCode, Cursor, and Grok read the skill from their own skill directories. The installer writes the file into each of those directories. There is no OpenCode npm plugin and no MCP server.
+Claude Code can also add this repository as a marketplace. The catalog is `.claude-plugin/marketplace.json`, and the plugin source is this repository. It installs the same skill. It does not install a `jacu` binary.
+
+```text
+/plugin marketplace add jacu-dev/jacu-fast
+/plugin install jacu-fast@jacu-fast
+```
+
+Start a new agent session after installing. Invoke the skill with `/jacu-fast` and the task. Claude Code namespaces plugin skills, so the same skill there is `/jacu-fast:jacu-fast`. OpenCode, Cursor, and Grok read the skill from their own skill directories. The skills installer writes the file into each of those directories. There is no OpenCode npm plugin and no MCP server.
 
 Until a `jacu` release exists, the skill has no executable to call. The agent should say that and keep using the project's own checks. It should not invent timings or a passing result.
 
@@ -61,6 +68,8 @@ The command contract the future CLI will follow is in [skills/jacu-fast/referenc
 | `docs/acceptance-cases.json` | The checklist the CLI must pass before a release can claim those behaviors |
 | `examples/policy.json` | A synthetic example of a future check policy |
 | `plugin.json` | Portable plugin identity for hosts that read it |
+| `.claude-plugin/marketplace.json` | Claude Code marketplace catalog |
+| `.claude-plugin/plugin.json` | Claude Code plugin manifest for the skill |
 | `LICENSE` | MIT license |
 
 `examples/policy.json` is an illustration. It is not a policy to drop into another repository.
