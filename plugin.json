@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "jacu-fast",
+  "version": "0.0.1",
+  "description": "Workflow skill for faster, complete AI-assisted development. The Rust CLI specified for later releases is not in this version.",
+  "author": {
+    "name": "jacu-dev"
+  },
+  "license": "MIT",
+  "keywords": [
+    "development",
+    "verification",
+    "productivity"
+  ],
+  "skills": "./skills/"
+}
