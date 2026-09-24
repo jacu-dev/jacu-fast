@@ -4,46 +4,52 @@ Jacu Fast is a workflow for coding agents. It shortens the path to a change that
 
 A faster "done" message is not the goal. A missing requirement, a skipped test, or work left in another worktree still counts as unfinished.
 
-The public repository is the skill and the specification. The Rust command, `jacu`, is described in [the plan](docs/IMPLEMENTATION_PLAN.md) and is not released yet. Installing the skill does not install a binary, and it does not make a test suite faster on its own.
+Version 0.0.2 is the skill and the specification. The Rust command, `jacu`, is described in [the plan](docs/IMPLEMENTATION_PLAN.md) and is not in this release. Installing the skill does not install a binary, and it does not make a test suite faster on its own. Nothing in this release requires macOS 14 or any other specific operating-system version.
 
 ## Install
 
-This is the install that matches the repository today. One command copies the skill into the coding agents already on your machine. The installer knows Grok, OpenCode, Cursor, Claude Code, Codex, and many others.
+These are two different installs. The marketplace plugin is what Claude Code loads. The skills installer only copies the skill file into an agent's skill directory. Neither one installs a `jacu` binary.
 
-```bash
-npx skills add jacu-dev/jacu-fast -g --all
-```
+### Claude Code
 
-To install it only for the agents you use:
-
-```bash
-npx skills add jacu-dev/jacu-fast -g -y -a grok opencode cursor claude-code codex
-```
-
-`-g` puts the skill in your user directory, so it is available in every project. `--all` skips the prompts and selects every skill and every detected agent. Node is used only for that copy. Jacu does not run as a Node service.
-
-Claude Code can also add this repository as a marketplace. The catalog is `.claude-plugin/marketplace.json`, and the plugin source is this repository. It installs the same skill. It does not install a `jacu` binary.
+In Desktop, paste the HTTPS repository URL. The `owner/repo` shorthand can select SSH, and a non-interactive Desktop process may stall on that choice.
 
 ```text
-/plugin marketplace add jacu-dev/jacu-fast
-/plugin install jacu-fast@jacu-fast
+https://github.com/jacu-dev/jacu-fast.git
 ```
 
-Start a new agent session after installing. Invoke the skill with `/jacu-fast` and the task. Claude Code namespaces plugin skills, so the same skill there is `/jacu-fast:jacu-fast`. OpenCode, Cursor, and Grok read the skill from their own skill directories. The skills installer writes the file into each of those directories. There is no OpenCode npm plugin and no MCP server.
+From a terminal where `claude` is already installed:
 
-Until a `jacu` release exists, the skill has no executable to call. The agent should say that and keep using the project's own checks. It should not invent timings or a passing result.
+```text
+claude plugin marketplace add https://github.com/jacu-dev/jacu-fast.git
+claude plugin install jacu-fast@jacu-fast
+```
 
-Update later with:
+Start a new session. The plugin command is `/jacu-fast:jacu-fast` followed by the task. There is no `/jacu-fast:run` command in this release.
+
+### Skills installer
+
+`npx --yes` skips npm's own install prompt. `-s jacu-fast` selects this skill. `-a` names the agents that should receive it. `--all` means every skill for every agent the installer supports, not only the agents already present on the machine.
 
 ```bash
-npx skills update jacu-fast -g
+npx --yes skills add jacu-dev/jacu-fast -g -y --skill jacu-fast -a claude-code
 ```
 
-Remove it with:
+A skill installed this way, and not through the plugin above, is invoked as `/jacu-fast`. Add further agent names to `-a` only when that agent should receive the skill. Node is used only for the copy. Jacu does not run as a Node service. There is no OpenCode npm plugin and no MCP server.
+
+Update the copied skill:
 
 ```bash
-npx skills remove jacu-fast -g -y
+npx --yes skills update jacu-fast -g -y
 ```
+
+Remove it:
+
+```bash
+npx --yes skills remove jacu-fast -g -y
+```
+
+The installed skill uses the project's own checks. It must not search for or run `jacu`, and it must not invent timings or a passing result.
 
 ## What the agent does
 
@@ -57,7 +63,7 @@ The skill keeps the current session. It does not start another agent, switch mod
 
 A real blocker ends as incomplete, with the missing piece named. There is no Jacu approval prompt.
 
-The command contract the future CLI will follow is in [skills/jacu-fast/references/runtime.md](skills/jacu-fast/references/runtime.md). Those commands are proposed. They are not a tool you can run from this commit.
+The command contract for a later executable is in [skills/jacu-fast/references/runtime.md](skills/jacu-fast/references/runtime.md). Those commands are not in version 0.0.2.
 
 ## What is in this repository
 

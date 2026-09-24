@@ -1,48 +1,49 @@
 ---
 name: jacu-fast
-description: Use Jacu Fast for an explicitly requested development or workflow-audit task. Reuse existing work, calibrate effort, avoid redundant checks and deliver complete integrated outcomes with evidence, without Jacu approval prompts.
+description: Use when the user explicitly asks for Jacu Fast on a development or workflow-audit task. This release is skill-only and has no jacu executable.
+disable-model-invocation: true
 ---
 
 # Jacu Fast
 
-Stay in the current agent session. Do not create or manage subagents, switch providers or change global permissions. Apply this workflow to the invoked task, not unrelated conversations.
+This release is skill-only and contains no Jacu executable. Do not search for, build, install, or run `jacu`. Apply the workflow with the tools and checks already available in the current project. Use those tool results as evidence. Do not invent Jacu receipts, timings, or a passing result.
 
-The user invokes this skill knowing its workflow. Do not ask whether to continue, run checks, use fallback or integrate an already-permitted contribution. Brief progress updates are fine. A real blocker produces evidence and a truthful incomplete result, not a confirmation question.
+`references/runtime.md` describes a future command-line contract. It is not an execution dependency of this release.
+
+Stay in the current agent session. Do not create or manage subagents, switch providers, or change global permissions. Apply this workflow to the invoked task, not unrelated conversations.
+
+The user invokes this skill knowing its workflow. Do not ask whether to continue, run checks, use a fallback, or integrate an already-permitted contribution. Brief progress updates are fine. A real blocker produces evidence and a truthful incomplete result, not a confirmation question.
 
 ## Start
 
-Resolve the version-matched packaged `jacu` executable using the host's package path and supported-platform map. Never silently use an unrelated executable on PATH or compile/install missing tools. If the executable is unavailable, disclose that limitation; do not invent Jacu results.
+Find an implementation that already exists before writing it again. Inspect the scoped repository and its linked worktrees with the host's existing tools. Preserve unrelated, active, dirty, or ambiguous work. An audit stays read-only.
 
-Load [the runtime reference](references/runtime.md) for arguments and result semantics. Load only the relevant reference sections and project evidence, not the entire implementation plan.
-
-Use `prepare` once per task to inspect the scoped repository and linked worktrees. Find existing relevant implementation before writing it again. Preserve unrelated, active, dirty or ambiguous work. Audit intent remains read-only.
-
-Bind a compact outcome contract to the original user request/specification. Cross-check for omitted outcomes. Identify existing code to reuse, minimal changes, the delivery target and required checks. A small task needs a small contract, not a planning ceremony.
+Bind a compact outcome list to the original request. Cross-check for omitted outcomes. Identify code to reuse, the smallest sufficient change, the delivery target, and the checks that decision depends on. A small task needs a small list, not a planning ceremony.
 
 ## Effort and implementation
 
-Provide brief scores for uncertainty, novelty and coupling on 0–2 scales; track consequence separately. Use the returned effort recommendation only through supported host controls. Record unsupported effort changes as advisory. Reassess only when meaningful new ambiguity, risk, conflict or unexplained failure appears.
+Score uncertainty, novelty, and coupling from 0 to 2, and record consequence separately. The sum is guidance for the work in this session: 0–1 focused, 2–4 standard, 5–6 deep. Sensitive or critical consequence raises that guidance and is not averaged away. There is no Jacu control that applies effort inside the host. Record the recommendation as advisory. Do not spawn an agent or edit global settings to simulate it.
 
-Implement the smallest sufficient behavior change in the repository's conventions. Prefer targeted patches and concise meaningful names. Do not generate speculative abstractions, redundant documents, opaque source aliases or unrelated refactors. Compact reference IDs may identify source in context; expand stale/ambiguous references before editing.
+Implement the smallest sufficient change in the repository's conventions. Prefer targeted patches and concise names. Do not add speculative abstractions, redundant documents, or unrelated refactors.
 
-Lower effort and time pressure never reduce requested outcomes. Do not replace a required integration with a mock, remove a negative case, weaken an assertion or silently defer an outcome to finish faster.
+Lower effort never removes a requested outcome. Do not replace a required integration with a mock, drop a negative case, weaken an assertion, or leave an outcome unstated in order to finish sooner.
 
 ## Verify and repair
 
-Use `verify` at a coherent iteration checkpoint, not after every file save. Choose the next useful check from the task/project policy. Do not mechanically run every checker or the full suite. A focused TDD red/green cycle is compatible with this workflow.
+Run the next useful project check at a coherent checkpoint, not the full suite after every save. Choose that check from the task and the project's own instructions. A focused red/green test cycle fits this workflow.
 
-Reuse only valid successful receipts. Preserve the original failure. A zero-test selection, timeout, obsolete snapshot, unavailable required check or semantic opinion is not passing evidence.
+Reuse an earlier result only when you still have its real output and the inputs it depends on are unchanged. A failure stays a failure. Zero selected tests, a timeout, a truncated result, an obsolete snapshot, or an unavailable required check is not a pass.
 
-Repair the relevant behavior, then rerun the affected scope. Another round needs new evidence, a meaningful change or a specific unresolved hypothesis. Do not repeat identical failing work endlessly.
+Repair the relevant behavior, then rerun the affected check. Another round needs new evidence, a meaningful change, or a specific unresolved hypothesis.
 
-Use an already-configured JEV integration only for a bounded judgment likely to save more work than it costs. No JEV, timeout or disallowed data egress -> deterministic continuation. Never configure credentials, invoke a hidden paid substitute or use a score to waive required checks.
+Use an already-configured JEV integration only for a bounded judgment that is likely to save more work than it costs. If JEV is missing, slow, or disallowed, continue with the project's own checks. Do not configure credentials, call a hidden paid substitute, or let a model score waive a required check.
 
 ## Reconcile and finish
 
-Integrate task-required contributions into the defined delivery target using permitted existing tools. Resolve relevant conflicts by inspection and verification; do not blindly choose a side or merge unrelated branches. Preserving work is not the same as delivering it.
+Put the task's required changes in the delivery target with the tools the host already permits. Resolve a relevant conflict by inspection and a real check. Preserving work elsewhere is not the same as delivering it.
 
-Run delivery verification against the actual combined candidate. It accounts for every outcome, missing/invalidated evidence and relevant work outside the target. It must not rerun unchanged valid checks merely as a finishing ritual.
+Before calling the work complete, account for every outcome, missing evidence, and relevant work outside the target. Do not rerun an unchanged check that already has a valid result.
 
-Use `report` for the final status. Report implementation, evidence and integration separately; include measured time and material limitations. Never claim completion from an unchecked list or the agent's own narrative.
+Report implementation, evidence, and integration separately. Include measured time and material limitations. Never claim completion from an unchecked list.
 
-On recoverable incompleteness, continue automatically. On an exhausted/external blocker, retain obligations and return an honest terminal incomplete/failed report without asking a question. Do not fabricate success or promise background work.
+On a recoverable gap, continue. On an exhausted or external blocker, keep the unmet outcome and return an incomplete or failed result without asking a question. Do not fabricate success or promise background work.

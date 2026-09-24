@@ -1,6 +1,6 @@
 # Jacu Fast Runtime Reference
 
-This is the implementation contract for the first release. Until the binary passes its acceptance tests, these are proposed commands, not evidence of an installed tool. Release packaging must keep this reference aligned with the actual CLI.
+Version 0.0.2 does not ship a `jacu` executable. Do not run the commands below. This file is the contract for a later release, after that executable exists and its acceptance tests have passed. Release packaging must keep this reference aligned with the actual CLI.
 
 ## Command lifecycle
 
