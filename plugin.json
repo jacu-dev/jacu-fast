@@ -1,15 +1,10 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "jacu-fast",
-  "version": "0.2.0",
-  "description": "Workflow plugin with the jacu command for macOS Apple Silicon and the jacu-fast skill.",
+  "version": "0.3.0",
+  "description": "A coding workflow skill with optional content-addressed verification and task-scoped Claude hooks.",
   "author": {
     "name": "jacu-dev"
   },
   "license": "MIT",
-  "keywords": [
-    "development",
-    "verification",
-    "productivity"
-  ]
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 }

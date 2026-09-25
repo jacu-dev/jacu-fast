@@ -20,7 +20,10 @@ fn run(home: &Path, args: &[&str]) -> (i32, Value) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let code = output.status.code().unwrap_or(1);
     let value = serde_json::from_str(&stdout).unwrap_or_else(|_| {
-        panic!("not json ({code}): {stdout}\n{}", String::from_utf8_lossy(&output.stderr))
+        panic!(
+            "not json ({code}): {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
     });
     (code, value)
 }
@@ -61,7 +64,10 @@ fn temp(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "jacu-acc-{name}-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
     ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
@@ -150,7 +156,10 @@ fn ni01_open_stdin_does_not_wait() {
         if child.try_wait().unwrap().is_some() {
             break;
         }
-        assert!(started.elapsed() < Duration::from_secs(3), "prepare waited on stdin");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "prepare waited on stdin"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -168,7 +177,10 @@ fn ni02_closed_stdin_without_policy_is_structured() {
 fn ni03_child_question_gets_no_answer() {
     let task = task("ni03");
     let script = task.root.join("ask");
-    exe(&script, "#!/bin/sh\nif read -r line; then echo answered; exit 0; else echo eof; exit 2; fi\n");
+    exe(
+        &script,
+        "#!/bin/sh\nif read -r line; then echo answered; exit 0; else echo eof; exit 2; fi\n",
+    );
     policy(
         &task.repo,
         &format!(
@@ -182,7 +194,10 @@ fn ni03_child_question_gets_no_answer() {
     let (code, value) = task.verify(prepared["session_id"].as_str().unwrap(), "delivery");
     assert_ne!(code, 0);
     assert_ne!(value["checks"][0]["state"], "passed");
-    assert!(!value["checks"][0]["detail"].as_str().unwrap_or("").contains("answered"));
+    assert!(!value["checks"][0]["detail"]
+        .as_str()
+        .unwrap_or("")
+        .contains("answered"));
 }
 
 #[test]
@@ -255,7 +270,13 @@ fn ni06_unchanged_failure_is_terminal_to_report() {
     assert_eq!(fs::read(&counter).unwrap(), b"x");
     let (code, report) = run(
         &task.home,
-        &["report", "--repo", task.repo.to_str().unwrap(), "--session", &session],
+        &[
+            "report",
+            "--repo",
+            task.repo.to_str().unwrap(),
+            "--session",
+            &session,
+        ],
     );
     assert_eq!(code, 2, "{report}");
     assert_eq!(report["outcome"], "failed");
@@ -481,7 +502,15 @@ fn v08_same_session_does_not_duplicate_or_kill_others() {
     let session = prepared["session_id"].as_str().unwrap().to_string();
     let mut sleeper = Command::new("/bin/sleep").arg("30").spawn().unwrap();
     let mut first = Command::new(bin())
-        .args(["verify", "--repo", task.repo.to_str().unwrap(), "--session", &session, "--checkpoint", "delivery"])
+        .args([
+            "verify",
+            "--repo",
+            task.repo.to_str().unwrap(),
+            "--session",
+            &session,
+            "--checkpoint",
+            "delivery",
+        ])
         .env("JACU_HOME", &task.home)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -489,14 +518,26 @@ fn v08_same_session_does_not_duplicate_or_kill_others() {
         .unwrap();
     std::thread::sleep(Duration::from_millis(200));
     let second = Command::new(bin())
-        .args(["verify", "--repo", task.repo.to_str().unwrap(), "--session", &session, "--checkpoint", "delivery"])
+        .args([
+            "verify",
+            "--repo",
+            task.repo.to_str().unwrap(),
+            "--session",
+            &session,
+            "--checkpoint",
+            "delivery",
+        ])
         .env("JACU_HOME", &task.home)
         .stdin(Stdio::null())
         .output()
         .unwrap();
     let first_status = first.wait().unwrap();
     assert!(first_status.success());
-    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stdout));
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stdout)
+    );
     assert_eq!(fs::read(counter).unwrap(), b"x");
     assert!(sleeper.try_wait().unwrap().is_none());
     let _ = sleeper.kill();
@@ -610,7 +651,10 @@ fn c02_omitted_outcome_stays_visible() {
 fn c03_weakened_assertion_cannot_close() {
     let task = task("c03");
     let script = task.root.join("unit");
-    exe(&script, "#!/bin/sh\nprintf 'test result: ok. 1 passed\\n'\nexit 0\n");
+    exe(
+        &script,
+        "#!/bin/sh\nprintf 'test result: ok. 1 passed\\n'\nexit 0\n",
+    );
     let body = |minimum: u32| {
         format!(
             r#"{{"schema_version":1,"checks":[{{"id":"unit","kind":"cargo-test","program":"{}","args":[],"cwd":".","timeout_seconds":5,"minimum_tests":{minimum}}}],"delivery":{{"required_check_ids":["unit"]}}}}"#,
@@ -669,20 +713,38 @@ fn c06_report_names_target_and_outcomes() {
     let (_, prepared) = task.prepare(&["--contract-file", contract_path.to_str().unwrap()]);
     let session = prepared["session_id"].as_str().unwrap();
     assert_eq!(task.verify(session, "delivery").0, 0);
-    let (_, report) = run(&task.home, &["report", "--repo", task.repo.to_str().unwrap(), "--session", session]);
+    let (_, report) = run(
+        &task.home,
+        &[
+            "report",
+            "--repo",
+            task.repo.to_str().unwrap(),
+            "--session",
+            session,
+        ],
+    );
     assert_eq!(report["outcome"], "complete");
     assert_eq!(report["outcomes"][0]["id"], "O1");
     assert!(report["candidate"]["hash"].as_str().unwrap().len() > 16);
-    assert!(report["candidate"]["repo"].as_str().unwrap().contains("repo"));
+    assert!(report["candidate"]["repo"]
+        .as_str()
+        .unwrap()
+        .contains("repo"));
 }
 
 #[test]
 fn g01_other_worktree_is_listed() {
     let task = task("g01");
     let other = task.root.join("other");
-    git(&task.repo, &["worktree", "add", other.to_str().unwrap(), "HEAD"]);
+    git(
+        &task.repo,
+        &["worktree", "add", other.to_str().unwrap(), "HEAD"],
+    );
     let (_, value) = task.prepare(&[]);
-    assert!(value["inventory"]["worktrees"].as_array().unwrap().len() >= 2, "{value}");
+    assert!(
+        value["inventory"]["worktrees"].as_array().unwrap().len() >= 2,
+        "{value}"
+    );
 }
 
 #[test]
@@ -701,8 +763,15 @@ fn g02_unrelated_dirty_file_is_preserved() {
     let contract_path = task.root.join("contract.json");
     fs::write(&contract_path, contract("ok", "present", "in_target")).unwrap();
     let (_, prepared) = task.prepare(&["--contract-file", contract_path.to_str().unwrap()]);
-    assert_eq!(task.verify(prepared["session_id"].as_str().unwrap(), "delivery").0, 0);
-    assert_eq!(fs::read_to_string(task.repo.join("notes.txt")).unwrap(), "keep\n");
+    assert_eq!(
+        task.verify(prepared["session_id"].as_str().unwrap(), "delivery")
+            .0,
+        0
+    );
+    assert_eq!(
+        fs::read_to_string(task.repo.join("notes.txt")).unwrap(),
+        "keep\n"
+    );
 }
 
 #[test]
@@ -749,9 +818,20 @@ fn g04_delivery_follows_the_integrated_commit() {
 fn g05_missing_worktree_and_upstream_are_reported() {
     let task = task("g05");
     let other = task.root.join("gone");
-    git(&task.repo, &["worktree", "add", other.to_str().unwrap(), "HEAD"]);
+    git(
+        &task.repo,
+        &["worktree", "add", other.to_str().unwrap(), "HEAD"],
+    );
     fs::remove_dir_all(&other).unwrap();
-    git(&task.repo, &["remote", "add", "origin", "https://example.invalid/jacu.git"]);
+    git(
+        &task.repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/jacu.git",
+        ],
+    );
     let (_, value) = task.prepare(&[]);
     let notes = value["inventory"]["notes"].to_string();
     assert!(notes.contains("missing"), "{value}");
@@ -822,7 +902,12 @@ fn e04_new_scores_can_escalate_without_a_subagent() {
     fs::write(&high, r#"{"schema_version":1,"outcomes":[{"id":"O1","statement":"Work.","implementation":"pending","delivery":"pending","evidence":[]}],"effort":{"uncertainty":2,"novelty":2,"coupling":2,"consequence":"ordinary"}}"#).unwrap();
     let (_, first) = task.prepare(&["--contract-file", low.to_str().unwrap()]);
     let session = first["session_id"].as_str().unwrap();
-    let (_, second) = task.prepare(&["--session", session, "--contract-file", high.to_str().unwrap()]);
+    let (_, second) = task.prepare(&[
+        "--session",
+        session,
+        "--contract-file",
+        high.to_str().unwrap(),
+    ]);
     assert_eq!(first["effort"]["recommended_effort"], "focused");
     assert_eq!(second["effort"]["recommended_effort"], "deep");
     assert!(!second.to_string().contains("subagent"));
@@ -853,7 +938,10 @@ fn sem01_missing_jev_does_not_block_or_call_out() {
 fn sem02_malformed_semantic_answer_cannot_pass() {
     let task = task("sem02");
     let script = task.root.join("jev");
-    exe(&script, "#!/bin/sh\nprintf '%s\\n' '{\"score\":null}'\nexit 0\n");
+    exe(
+        &script,
+        "#!/bin/sh\nprintf '%s\\n' '{\"score\":null}'\nexit 0\n",
+    );
     policy(
         &task.repo,
         &format!(
@@ -944,7 +1032,10 @@ fn ct02_source_names_stay_intact() {
     git(&task.repo, &["commit", "-m", "name"]);
     let (_, value) = task.prepare(&[]);
     assert_eq!(value["outcome"], "ready");
-    assert_eq!(fs::read_to_string(task.repo.join("settings_store.rs")).unwrap(), "fn save() {}\n");
+    assert_eq!(
+        fs::read_to_string(task.repo.join("settings_store.rs")).unwrap(),
+        "fn save() {}\n"
+    );
 }
 
 #[test]
@@ -955,7 +1046,11 @@ fn p01_package_exposes_skill_and_commands() {
     assert!(skill.contains("bin/jacu"));
     let (_, caps) = run(&temp("p01"), &["capabilities"]);
     assert_eq!(caps["compiles_on_missing_binary"], false);
-    assert!(caps["commands"].as_array().unwrap().iter().any(|item| item == "prepare"));
+    assert!(caps["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item == "prepare"));
 }
 
 #[test]
@@ -1045,22 +1140,45 @@ fn p05_session_pin_and_project_files_survive() {
     let mut value: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
     value["binary_version"] = Value::String("9.9.9".into());
     fs::write(&file, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-    let (code, report) = run(&task.home, &["report", "--repo", task.repo.to_str().unwrap(), "--session", session]);
+    let (code, report) = run(
+        &task.home,
+        &[
+            "report",
+            "--repo",
+            task.repo.to_str().unwrap(),
+            "--session",
+            session,
+        ],
+    );
     assert_eq!(code, 4, "{report}");
-    let _ = run(&task.home, &["clean", "--repo", task.repo.to_str().unwrap()]);
-    assert_eq!(fs::read_to_string(task.repo.join("keep-me.txt")).unwrap(), "keep\n");
-    assert_eq!(fs::read_to_string(task.repo.join("README")).unwrap(), "synthetic\n");
+    let _ = run(
+        &task.home,
+        &["clean", "--repo", task.repo.to_str().unwrap()],
+    );
+    assert_eq!(
+        fs::read_to_string(task.repo.join("keep-me.txt")).unwrap(),
+        "keep\n"
+    );
+    assert_eq!(
+        fs::read_to_string(task.repo.join("README")).unwrap(),
+        "synthetic\n"
+    );
 }
 
 #[test]
 fn p06_documented_commands_match_capabilities() {
-    let readme = fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap();
+    let readme =
+        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap();
     for command in ["prepare", "verify", "report"] {
         assert!(readme.contains(command), "{command}");
     }
     let (_, caps) = run(&temp("p06"), &["capabilities"]);
     for command in ["prepare", "verify", "report", "clean", "capabilities"] {
-        assert!(caps["commands"].as_array().unwrap().iter().any(|item| item == command));
+        assert!(caps["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item == command));
     }
 }
 
@@ -1080,7 +1198,11 @@ fn p07_published_tree_has_no_private_material() {
                 format!("PRIVATE-{}", "PILOT"),
             ];
             for marker in markers {
-                assert!(!text.contains(&marker), "{} contains a private marker", path.display());
+                assert!(
+                    !text.contains(&marker),
+                    "{} contains a private marker",
+                    path.display()
+                );
             }
         }
     }
@@ -1092,9 +1214,15 @@ fn h01_inventory_deletes_nothing() {
     fs::create_dir_all(task.repo.join("target")).unwrap();
     fs::write(task.repo.join("target/cache.bin"), "cache").unwrap();
     let other = task.root.join("other");
-    git(&task.repo, &["worktree", "add", other.to_str().unwrap(), "HEAD"]);
+    git(
+        &task.repo,
+        &["worktree", "add", other.to_str().unwrap(), "HEAD"],
+    );
     let (_, _) = task.prepare(&[]);
-    assert_eq!(fs::read(task.repo.join("target/cache.bin")).unwrap(), b"cache");
+    assert_eq!(
+        fs::read(task.repo.join("target/cache.bin")).unwrap(),
+        b"cache"
+    );
     assert!(other.join("README").exists());
 }
 
@@ -1142,7 +1270,10 @@ fn h03_changed_diagnostic_and_untracked_work_stay() {
         .into_iter()
         .find(|path| path.ends_with(format!("{session}.json")))
         .unwrap();
-    let mut file = fs::OpenOptions::new().append(true).open(&diagnostic).unwrap();
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(&diagnostic)
+        .unwrap();
     writeln!(file, "changed").unwrap();
     let _ = diagnostic.set_modified(SystemTime::now() - Duration::from_secs(10));
     fs::write(task.repo.join("untracked.txt"), "mine\n").unwrap();
@@ -1154,7 +1285,10 @@ fn h03_changed_diagnostic_and_untracked_work_stay() {
         .output()
         .unwrap();
     assert!(diagnostic.exists());
-    assert_eq!(fs::read_to_string(task.repo.join("untracked.txt")).unwrap(), "mine\n");
+    assert_eq!(
+        fs::read_to_string(task.repo.join("untracked.txt")).unwrap(),
+        "mine\n"
+    );
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&task.repo)
@@ -1175,6 +1309,13 @@ fn h04_disk_count_and_build_timing() {
     )
     .unwrap();
     fs::write(task.repo.join("sample/src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(task.repo.join(".gitignore"), "sample/target/\n").unwrap();
+    let generated = Command::new("cargo")
+        .args(["generate-lockfile", "--offline", "--manifest-path"])
+        .arg(task.repo.join("sample/Cargo.toml"))
+        .status()
+        .unwrap();
+    assert!(generated.success());
     policy(
         &task.repo,
         r#"{"schema_version":1,"checks":[{"id":"build","kind":"cargo-check","program":"cargo","args":["check","--offline","--manifest-path","sample/Cargo.toml","--quiet"],"cwd":".","timeout_seconds":180}],"delivery":{"required_check_ids":["build"]}}"#,
@@ -1182,9 +1323,14 @@ fn h04_disk_count_and_build_timing() {
     let contract_path = task.root.join("contract.json");
     fs::write(&contract_path, contract("build", "present", "in_target")).unwrap();
     let (_, prepared) = task.prepare(&["--contract-file", contract_path.to_str().unwrap()]);
-    let logical = prepared["inventory"]["disk_logical_bytes"].as_u64().unwrap();
+    let logical = prepared["inventory"]["disk_logical_bytes"]
+        .as_u64()
+        .unwrap();
     let blob = fs::metadata(task.repo.join("blob.bin")).unwrap().len();
-    assert!(logical < blob * 2 + 50_000, "logical {logical} double-counted blob {blob}");
+    assert!(
+        logical < blob * 2 + 50_000,
+        "logical {logical} double-counted blob {blob}"
+    );
     let (code, value) = task.verify(prepared["session_id"].as_str().unwrap(), "delivery");
     assert_eq!(code, 0, "{value}");
     assert!(value["timings_ms"]["next_build"].as_u64().is_some());
@@ -1225,8 +1371,16 @@ fn m03_deferred_checks_are_not_passes() {
     .unwrap();
     let (_, prepared) = task.prepare(&["--contract-file", contract_path.to_str().unwrap()]);
     let (_, value) = task.verify(prepared["session_id"].as_str().unwrap(), "iteration");
-    let states: Vec<_> = value["checks"].as_array().unwrap().iter().map(|item| item["state"].as_str().unwrap().to_string()).collect();
-    assert!(states.contains(&"deferred".to_string()) || states.contains(&"missing".to_string()), "{value}");
+    let states: Vec<_> = value["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["state"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        states.contains(&"deferred".to_string()) || states.contains(&"missing".to_string()),
+        "{value}"
+    );
     assert!(states.iter().any(|state| state != "passed"));
     assert_ne!(value["outcome"], "complete");
 }

@@ -1,79 +1,92 @@
 ---
 name: jacu-fast
-description: Use when the user explicitly asks for Jacu Fast on a development or workflow-audit task. This release runs the packaged jacu executable.
-disable-model-invocation: true
+description: Use Jacu Fast when the user asks for Jacu Fast, jacu-fast, use jacu, or a Jacu workflow audit. Complete the requested development task with explicit outcomes, current evidence, and delivery reconciliation. Supports natural-language invocation and a portable skill-only mode.
 ---
 
 # Jacu Fast
 
-This release includes the `jacu` executable at `bin/jacu` in the plugin. Use that packaged file. Do not use a different `jacu` from `PATH`, and do not compile or download another one.
+Stay in the current agent session. Do not create another agent, switch providers,
+edit global permissions, or ask for routine confirmation. A real blocker ends as
+incomplete with its evidence, not as a question or an invented pass.
 
-Resolve the binary in this order: `JACU_BIN` when it is an absolute path to a file, then `$CLAUDE_PLUGIN_ROOT/bin/jacu`, then `bin/jacu` two directories above this skill. This packaged build is macOS Apple Silicon (`darwin` / `arm64`). On any other platform, report the binary as unavailable and stop. Do not invent receipts, timings, or a passing result.
+## Resolve the installed mode once
 
-`references/runtime.md` is the command contract for this binary.
+Claude plugin invocation is `/jacu-fast:jacu-fast <task>`. The standalone skill is
+`/jacu-fast <task>`; other hosts use their own skill invocation syntax. A user's
+natural-language request to use Jacu is also an instruction to invoke this skill.
+Do not silently ignore it because a short slash alias is absent.
 
-Stay in the current agent session. Do not create or manage subagents, switch providers, or change global permissions. Apply this workflow to the invoked task, not unrelated conversations.
+When the plugin is available, use its absolute path, not an unrelated `jacu` on
+PATH. Resolve the root from `${CLAUDE_PLUGIN_ROOT}` or two directories above this
+skill. Run `python3 "PLUGIN_ROOT/scripts/host.py" doctor` once. Never load the old
+0.2.0 binary, fabricate capabilities, install credentials, or compile on demand.
 
-The user invokes this skill knowing its workflow. Do not ask whether to continue, run checks, use a fallback, or integrate an already-permitted contribution. Brief progress updates are fine. A real blocker produces evidence and a truthful incomplete result, not a confirmation question.
+When `mode` is `runtime`, use `PLUGIN_ROOT/bin/jacu` below. When the package,
+Python adapter, or a compatible runtime is absent, continue automatically in
+**skill-only mode**. State that mode once. It has no Jacu receipts, automatic
+closure gate, reliable cross-call cache, or measured runtime savings. Use the
+host's existing tools to carry out the same task; do not treat missing optional
+infrastructure as a reason to abandon the requested work.
 
-## Start
+## Capture, investigate, implement
 
-Write the original request to a file. Call:
+Keep a compact list mapping **every requested result to its source**. Include
+negative cases and integrations, not just happy-path code. Cross-check it against
+the original request. A generated list does not prove that nothing was omitted.
+Do not discard an item to finish earlier. Separate implementation, evidence,
+and delivery; preserve a visible pending item for any genuine limitation.
 
-```sh
-jacu prepare --repo REPO --request-file REQUEST --format json
-```
+Inspect the current Git state and linked worktrees before duplicating work. Read
+relevant diffs/files in other branches or worktrees; listing their paths is not
+finding an implementation. Preserve unrelated, dirty, active, or ambiguous work.
+Choose the smallest sufficient change using the project's own conventions.
 
-Add `--audit` when the task is read-only. For an audit, do not edit the project. `assessment_complete` is not a certification.
+In runtime mode, read `references/runtime.md` for exact JSON examples. Save the
+request and contract outside the target repository. Call `prepare --repo REPO
+--request-file REQUEST --contract-file CONTRACT`. Capture the returned session.
+For a read-only audit add `--audit`; do not edit the target project or run its
+commands. Select an explicit `delivery_target` when the requested destination is
+not the current branch/worktree. The default is the observed current path/branch.
 
-When the result is `ready` and the outcome contract is missing, write a contract file and call `prepare` again with `--contract-file` and `--session` set to the returned session id. Bind every requested outcome. Do not drop an outcome unless the contract includes an amendment that names it.
-
-Score uncertainty, novelty, and coupling from 0 to 2, and record consequence separately. The executable returns `recommended_effort` as advisory. It does not change host settings. There is no Jacu control that applies effort inside the host.
-
-## Effort and implementation
-
-The sum is guidance for the work in this session: 0–1 focused, 2–4 standard, 5–6 deep. Sensitive or critical consequence raises that guidance and is not averaged away.
-
-Find an implementation that already exists before writing it again. Inspect the repository and its linked worktrees with the host's existing tools. Preserve unrelated, active, dirty, or ambiguous work.
-
-Implement the smallest sufficient change in the repository's conventions. Prefer targeted patches and concise names. Do not add speculative abstractions, redundant documents, or unrelated refactors.
-
-Lower effort never removes a requested outcome. Do not replace a required integration with a mock, drop a negative case, weaken an assertion, or leave an outcome unstated in order to finish sooner.
-
-## Verify and repair
-
-Project checks come from `.jacu-fast.json` in the repository root. Jacu runs only those argument arrays. It does not turn model text into a shell command.
-
-```sh
-jacu verify --repo REPO --session SESSION --checkpoint iteration --format json
-```
-
-Run the next useful check at a coherent checkpoint, not the full suite after every save. A focused red/green test cycle fits this workflow.
-
-Reuse applies only when the executable reports the same candidate and a still-valid receipt. A failure stays a failure. Zero selected tests, a timeout, a truncated result, or an unknown result is not a pass. An unchanged candidate does not rerun a failed or unknown check.
-
-Repair the relevant behavior, then call `verify` again. Another round needs new evidence, a meaningful change, or a specific unresolved hypothesis.
-
-Before calling the work complete:
+After preparation in Claude, bind the task to the actual host session:
 
 ```sh
-jacu verify --repo REPO --session SESSION --checkpoint delivery --format json
+python3 "PLUGIN_ROOT/scripts/host.py" activate --repo REPO --session SESSION --host-session "${CLAUDE_SESSION_ID}"
 ```
 
-`ready` is not delivered. `complete` requires every active outcome, valid required evidence, and the recorded delivery target.
+Use the real host session ID substituted by Claude. If it is unavailable or remains
+literal, report that the automatic gate is unavailable and retain explicit final
+verification; do not invent an ID. Other hosts do not inherit the Claude hook.
 
-Use an already-configured JEV integration only for a bounded judgment that is likely to save more work than it costs. If JEV is missing, slow, or disallowed, continue with the project's own checks. Do not configure credentials, call a hidden paid substitute, or let a model score waive a required check.
+## Verify, repair, reconcile
 
-## Reconcile and finish
+Run useful checks at coherent checkpoints, not the whole suite after every save.
+In runtime mode use `verify --repo REPO --session SESSION --checkpoint iteration`.
+The runtime reads `.jacu-fast.json`, or discovers existing Cargo, Go, Swift Package
+and package.json checks. Discovery never installs dependencies or writes policy.
+For custom projects, derive commands from actual project scripts and write the
+policy before binding a contract. Do not invent a passing placeholder command.
 
-Put the task's required changes in the delivery target with the tools the host already permits. Resolve a relevant conflict by inspection and a real check. Preserving work elsewhere is not the same as delivering it.
+Reuse only the runtime's valid evidence. In skill-only mode, do not infer cache
+validity from an unchanged commit or a remembered passing result. Zero tests,
+unknown formats, timeout, truncated output and unverified state are not passes.
+Fix behavior, then verify again. `--retry` is only for a diagnosed transient or
+external recovery, not an endless unchanged-failure loop.
 
-```sh
-jacu report --repo REPO --session SESSION --format json
-```
+Use existing Jev only for a bounded assessment that adds value. No credential
+setup, paid substitute, model score that waives tests, or mandatory Jev gate.
+Effort guidance is advisory; do not claim host effort settings were changed.
 
-Report implementation, evidence, and integration separately. Include the measured timings from the executable. Never claim completion from an unchecked list.
+Integrate the required work into the actual requested destination using the
+host's permitted tools. Reconcile relevant branches/worktrees without deleting
+unknown work. Preserved work elsewhere is not a delivered feature.
 
-Exit status: 0 ready, complete, or assessment complete; 2 a known check failed; 3 incomplete or required evidence unavailable; 4 invalid input. Read the JSON as well as the exit status.
+Before finishing, runtime mode requires `verify --repo REPO --session SESSION
+--checkpoint delivery`, then `report --repo REPO --session SESSION`. `ready` is
+not complete. In skill-only mode perform and name the actual final checks with
+the host tools; distinguish observed results from claims that remain unverified.
 
-On a recoverable gap, continue. On an exhausted or external blocker, keep the unmet outcome and return an incomplete or failed result without asking a question. Do not fabricate success or promise background work.
+Report the operating mode, implemented outcomes, executed checks, actual delivery
+target and remaining limitations. Do not call an unrun test passed or a synthetic
+protocol test a successful installation in the user's application. No promise
+of background work. No routine request for the user's OK.

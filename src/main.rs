@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use jacu_fast::{
-    capabilities, clean, invalid_output, prepare, report, verify, verify_hook, Checkpoint, HookRequest,
-    PrepareRequest, ReportFormat, ReportRequest, VerifyRequest,
+    capabilities, clean, invalid_output, prepare, report, verify_hook, verify_retry, Checkpoint,
+    HookRequest, PrepareRequest, ReportFormat, ReportRequest, VerifyRequest,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -10,16 +10,14 @@ use std::process::ExitCode;
 #[command(
     name = "jacu",
     version,
-    about = "Prepare, verify, and report one coding task."
+    about = "Prepare, verify, and report one coding task using observed evidence."
 )]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
-
 #[derive(Subcommand)]
 enum Commands {
-    /// Inventory the repository and bind a task contract.
     Prepare {
         #[arg(long)]
         repo: PathBuf,
@@ -31,70 +29,66 @@ enum Commands {
         contract_file: Option<PathBuf>,
         #[arg(long)]
         session: Option<String>,
-        #[arg(long, value_enum, default_value_t = FormatArg::Json)]
-        format: FormatArg,
+        #[arg(long,value_enum,default_value_t=Format::Json)]
+        format: Format,
     },
-    /// Run the next check, the delivery set, or a no-exec hook evaluation.
     Verify {
         #[arg(long)]
         repo: PathBuf,
         #[arg(long)]
         session: String,
-        #[arg(long, value_enum, default_value_t = CheckpointArg::Delivery)]
-        checkpoint: CheckpointArg,
+        #[arg(long,value_enum,default_value_t=Point::Delivery)]
+        checkpoint: Point,
+        /// Retry after a diagnosed external recovery, even with identical source inputs.
+        #[arg(long)]
+        retry: bool,
         #[arg(long)]
         hook: Option<String>,
-        #[arg(long, value_enum, default_value_t = FormatArg::Json)]
-        format: FormatArg,
+        #[arg(long,value_enum,default_value_t=Format::Json)]
+        format: Format,
     },
-    /// Print the recorded result for the current candidate.
     Report {
         #[arg(long)]
         repo: PathBuf,
         #[arg(long)]
         session: String,
-        #[arg(long, value_enum, default_value_t = FormatArg::Json)]
-        format: FormatArg,
+        #[arg(long,value_enum,default_value_t=Format::Json)]
+        format: Format,
     },
-    /// Remove expired Jacu-owned diagnostics. Repository files stay in place.
+    /// Remove only expired Jacu-owned diagnostics, never worktrees or build caches.
     Clean {
         #[arg(long)]
         repo: PathBuf,
     },
-    /// Report the platform and the commands this binary actually provides.
     Capabilities,
 }
-
 #[derive(Clone, Copy, ValueEnum)]
-enum FormatArg {
+enum Format {
     Json,
     Markdown,
 }
-
 #[derive(Clone, Copy, ValueEnum)]
-enum CheckpointArg {
+enum Point {
     Iteration,
     Delivery,
 }
-
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
-        Err(error) => {
-            use clap::error::ErrorKind;
+        Ok(c) => c,
+        Err(e) => {
             if matches!(
-                error.kind(),
-                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
             ) {
-                let _ = error.print();
+                let _ = e.print();
                 return ExitCode::SUCCESS;
             }
-            let output = invalid_output("cli", &error.to_string());
-            println!("{}", output.body);
+            let o = invalid_output("cli", &e.to_string());
+            println!("{}", o.body);
             return ExitCode::from(4);
         }
     };
-    let output = match cli.command {
+    let out = match cli.command {
         Commands::Prepare {
             repo,
             request_file,
@@ -103,9 +97,7 @@ fn main() -> ExitCode {
             session,
             format,
         } => {
-            if !matches!(format, FormatArg::Json) {
-                invalid_output("prepare", "prepare only writes json")
-            } else {
+            if matches!(format, Format::Json) {
                 prepare(PrepareRequest {
                     repo,
                     request_file,
@@ -113,28 +105,34 @@ fn main() -> ExitCode {
                     contract_file,
                     session,
                 })
+            } else {
+                invalid_output("prepare", "prepare only writes json")
             }
         }
         Commands::Verify {
             repo,
             session,
             checkpoint,
+            retry,
             hook,
             format,
         } => {
-            if !matches!(format, FormatArg::Json) {
+            if !matches!(format, Format::Json) {
                 invalid_output("verify", "verify only writes json")
             } else if hook.is_some() {
                 verify_hook(HookRequest { repo, session })
             } else {
-                verify(VerifyRequest {
-                    repo,
-                    session,
-                    checkpoint: match checkpoint {
-                        CheckpointArg::Iteration => Checkpoint::Iteration,
-                        CheckpointArg::Delivery => Checkpoint::Delivery,
+                verify_retry(
+                    VerifyRequest {
+                        repo,
+                        session,
+                        checkpoint: match checkpoint {
+                            Point::Iteration => Checkpoint::Iteration,
+                            Point::Delivery => Checkpoint::Delivery,
+                        },
                     },
-                })
+                    retry,
+                )
             }
         }
         Commands::Report {
@@ -145,13 +143,13 @@ fn main() -> ExitCode {
             repo,
             session,
             format: match format {
-                FormatArg::Json => ReportFormat::Json,
-                FormatArg::Markdown => ReportFormat::Markdown,
+                Format::Json => ReportFormat::Json,
+                Format::Markdown => ReportFormat::Markdown,
             },
         }),
         Commands::Clean { repo } => clean(repo),
         Commands::Capabilities => capabilities(),
     };
-    println!("{}", output.body);
-    ExitCode::from(output.exit_code as u8)
+    println!("{}", out.body);
+    ExitCode::from(out.exit_code as u8)
 }

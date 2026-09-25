@@ -1,3 +1,6 @@
+mod inventory;
+mod runner;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -5,13 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-const OUTPUT_CAP: usize = 262_144;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Checkpoint {
@@ -68,9 +69,16 @@ struct Session {
     dirty: bool,
     #[serde(default)]
     bound_minimums: BTreeMap<String, u32>,
+    #[serde(default)]
+    delivery_target: Option<DeliveryTarget>,
+    #[serde(default)]
+    bound_checks: BTreeMap<String, String>,
+    #[serde(default)]
+    bound_required: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Contract {
     schema_version: u32,
     outcomes: Vec<OutcomeSpec>,
@@ -79,9 +87,20 @@ struct Contract {
     amendments: Vec<Amendment>,
     #[serde(default)]
     context: Vec<ContextRef>,
+    #[serde(default)]
+    delivery_target: Option<DeliveryTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct DeliveryTarget {
+    path: String,
+    #[serde(default)]
+    branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OutcomeSpec {
     id: String,
     statement: String,
@@ -91,6 +110,8 @@ struct OutcomeSpec {
     evidence: Vec<String>,
     #[serde(default)]
     inapplicable_reason: Option<String>,
+    #[serde(default)]
+    source_quote: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,9 +161,14 @@ struct Receipt {
     env_sha256: String,
     #[serde(default)]
     kind: String,
+    #[serde(default)]
+    request_sha256: String,
+    #[serde(default)]
+    program_sha256: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PolicyFile {
     #[serde(default = "schema_one")]
     schema_version: u32,
@@ -152,7 +178,8 @@ struct PolicyFile {
     delivery: DeliverySpec,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CheckSpec {
     id: String,
     #[serde(default = "external_kind")]
@@ -171,9 +198,14 @@ struct CheckSpec {
     external_state: bool,
     #[serde(default)]
     environment: Vec<String>,
+    #[serde(default)]
+    inputs: Vec<String>,
+    #[serde(default = "score_default")]
+    minimum_score: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct DeliverySpec {
     #[serde(default)]
     required_check_ids: Vec<String>,
@@ -199,6 +231,7 @@ struct InventoryView {
     notes: Vec<String>,
     disk_logical_bytes: u64,
     disk_allocated_bytes: u64,
+    disk_scope: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -242,6 +275,10 @@ struct Envelope {
     outcomes: Vec<OutcomeView>,
     usage: UsageView,
     counts_in_denominator: bool,
+    delivery_target: Option<DeliveryTarget>,
+    assurance: Value,
+    policy_source: String,
+    discovered_checks: Vec<CheckSpec>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -276,16 +313,63 @@ struct PolicyState {
     raw_sha256: String,
     checks: Vec<CheckSpec>,
     required: Vec<String>,
+    source: String,
 }
 
 struct Lock {
-    path: PathBuf,
+    file: fs::File,
 }
-
 impl Drop for Lock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            unsafe {
+                libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+            }
+        }
     }
+}
+fn score_default() -> f64 {
+    0.8
+}
+fn effective_minimum(c: &CheckSpec) -> u32 {
+    if c.kind.contains("test") {
+        c.minimum_tests.max(1)
+    } else {
+        c.minimum_tests
+    }
+}
+fn within(root: &Path, path: &str) -> Result<PathBuf, String> {
+    if Path::new(path).is_absolute()
+        || Path::new(path)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("input path must be relative and remain within the repository".into());
+    }
+    resolve_cwd(root, path)
+}
+fn snapshot_inputs(root: &Path) -> Result<Vec<String>, String> {
+    let path = root.join(".jacu-fast.json");
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let policy: PolicyFile =
+        serde_json::from_slice(&read_limited(&path, 262144)?).map_err(|e| e.to_string())?;
+    Ok(policy.checks.into_iter().flat_map(|c| c.inputs).collect())
+}
+fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|e| e.to_string())?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > limit {
+        return Err("input exceeds the size limit".into());
+    }
+    Ok(bytes)
 }
 
 fn schema_one() -> u32 {
@@ -323,6 +407,10 @@ pub fn invalid_output(command: &'static str, message: &str) -> Output {
         outcomes: Vec::new(),
         usage: UsageView::unknown(),
         counts_in_denominator: false,
+        delivery_target: None,
+        assurance: serde_json::json!({"verified":false}),
+        policy_source: "unavailable".into(),
+        discovered_checks: Vec::new(),
     };
     Output {
         exit_code: 4,
@@ -339,8 +427,11 @@ pub fn prepare(request: PrepareRequest) -> Output {
 }
 
 pub fn verify(request: VerifyRequest) -> Output {
+    verify_retry(request, false)
+}
+pub fn verify_retry(request: VerifyRequest, retry: bool) -> Output {
     let started = Instant::now();
-    match verify_inner(request, started) {
+    match verify_inner(request, started, retry) {
         Ok(output) => output,
         Err(message) => invalid_output("verify", &message),
     }
@@ -356,8 +447,8 @@ pub fn report(request: ReportRequest) -> Output {
 
 fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, String> {
     let facts = inspect_repo(&request.repo)?;
-    let request_bytes = fs::read(&request.request_file)
-        .map_err(|error| format!("cannot read request file: {error}"))?;
+    let request_bytes = read_limited(&request.request_file, 131072)?;
+    let request_text = std::str::from_utf8(&request_bytes).map_err(|_| "request must be UTF-8")?;
     if request_bytes.is_empty() {
         return Err("request file is empty".into());
     }
@@ -371,7 +462,11 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
         None => new_session_id(&request_sha256),
     };
     let _lock = lock_session(&facts_key(&facts), &session_id)?;
-    let mut session = load_session(&facts, &session_id)?.unwrap_or(Session {
+    let existing = load_session(&facts, &session_id)?;
+    if request.session.is_some() && existing.is_none() {
+        return Err("unknown session".into());
+    }
+    let mut session = existing.unwrap_or(Session {
         schema_version: SCHEMA_VERSION,
         binary_version: VERSION.to_string(),
         session_id: session_id.clone(),
@@ -387,12 +482,27 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
         head: facts.head.clone(),
         dirty: facts.dirty,
         bound_minimums: BTreeMap::new(),
+        delivery_target: Some(DeliveryTarget {
+            path: facts.canonical.to_string_lossy().into_owned(),
+            branch: facts.branch.clone(),
+        }),
+        bound_checks: BTreeMap::new(),
+        bound_required: Vec::new(),
     });
     if session.schema_version != SCHEMA_VERSION {
         return Err("session schema is not compatible with this binary".into());
     }
     if session.repo != facts.canonical.to_string_lossy() {
         return Err("session belongs to a different repository".into());
+    }
+    if session.binary_version != VERSION {
+        return Err(format!(
+            "session is pinned to jacu {}; this binary is {VERSION}",
+            session.binary_version
+        ));
+    }
+    if session.request_sha256 != request_sha256 || session.audit != request.audit {
+        return Err("request and audit mode are immutable; preserve this task and create a separate task for a changed request".into());
     }
     session.audit = request.audit;
     session.request_sha256 = request_sha256;
@@ -404,7 +514,40 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
     session.binary_version = VERSION.to_string();
     if let Some(path) = request.contract_file {
         let next = read_contract(&path)?;
+        if let Some(target) = &next.delivery_target {
+            let path = fs::canonicalize(if Path::new(&target.path).is_absolute() {
+                PathBuf::from(&target.path)
+            } else {
+                facts.canonical.join(&target.path)
+            })
+            .map_err(|e| e.to_string())?;
+            if path != facts.canonical || target.branch != facts.branch {
+                return Err("prepare --repo must name the actual delivery target and its checked-out branch".into());
+            }
+            let normalized = DeliveryTarget {
+                path: path.to_string_lossy().into_owned(),
+                branch: target.branch.clone(),
+            };
+            if session.delivery_target.as_ref() != Some(&normalized) {
+                return Err("delivery target is pinned for this task".into());
+            }
+        }
+        for outcome in &next.outcomes {
+            if let Some(quote) = &outcome.source_quote {
+                if quote.trim().is_empty() || !request_text.contains(quote) {
+                    return Err(format!(
+                        "source quote for {} is not in the original request",
+                        outcome.id
+                    ));
+                }
+            }
+        }
+        let policy_changes = weakened_pending(&session, &policy);
+        if !policy_changes.is_empty() {
+            return Err(policy_changes.join("; "));
+        }
         if let Some(previous) = &session.contract {
+            validate_revision(previous, &next)?;
             let dropped = dropped_outcomes(previous, &next);
             if !dropped.is_empty() {
                 return Err(format!(
@@ -419,6 +562,12 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
             return Err(problem);
         }
         session.bound_minimums = minimums;
+        session.bound_checks = policy
+            .checks
+            .iter()
+            .map(|c| (c.id.clone(), check_definition(c)))
+            .collect();
+        session.bound_required = policy.required.clone();
         session.contract = Some(next);
     }
     save_session(&session)?;
@@ -439,7 +588,10 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
             "ready".to_string(),
             false,
             vec!["outcome contract is missing".into()],
-            vec!["Write a contract file and call prepare again with --contract-file and --session.".into()],
+            vec![
+                "Write a contract file and call prepare again with --contract-file and --session."
+                    .into(),
+            ],
         )
     } else {
         (
@@ -464,7 +616,7 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
     ))
 }
 
-fn verify_inner(request: VerifyRequest, started: Instant) -> Result<Output, String> {
+fn verify_inner(request: VerifyRequest, started: Instant, retry: bool) -> Result<Output, String> {
     validate_session_id(&request.session)?;
     let facts = inspect_repo(&request.repo)?;
     let _lock = lock_session(&facts_key(&facts), &request.session)?;
@@ -503,6 +655,25 @@ fn verify_inner(request: VerifyRequest, started: Instant) -> Result<Output, Stri
             started,
         ));
     }
+    let mut gate_gaps = weakened_pending(&session, &policy);
+    if !target_matches(&session, &facts) {
+        gate_gaps.push("observed branch/path does not match the recorded delivery target".into());
+    }
+    if !gate_gaps.is_empty() {
+        return Ok(finish(
+            "verify",
+            &session,
+            &facts,
+            &policy,
+            "incomplete",
+            false,
+            3,
+            gate_gaps,
+            vec!["Restore the bound checks and integrate into the recorded target.".into()],
+            None,
+            started,
+        ));
+    }
     let selected = planned_ids(&policy, session.contract.as_ref(), request.checkpoint);
     let mut ran_failure = false;
     let mut saw_unknown = false;
@@ -514,7 +685,7 @@ fn verify_inner(request: VerifyRequest, started: Instant) -> Result<Output, Stri
             .ok_or_else(|| format!("policy has no check {check_id}"))?;
         let previous = matching_receipt(&session, spec, &facts.candidate_hash, &policy.raw_sha256)
             .map(|receipt| receipt.state.clone());
-        if !needs_run(spec, previous.as_deref()) {
+        if !retry && !needs_run(spec, previous.as_deref()) {
             ran_failure = ran_failure || previous.as_deref() == Some("failed");
             saw_unknown = saw_unknown || previous.as_deref() == Some("unknown");
             if request.checkpoint == Checkpoint::Iteration && (ran_failure || saw_unknown) {
@@ -532,13 +703,26 @@ fn verify_inner(request: VerifyRequest, started: Instant) -> Result<Output, Stri
         ran_failure = ran_failure || receipt.state == "failed";
         saw_unknown = saw_unknown || receipt.state == "unknown";
         session.receipts.push(receipt);
+        if session.receipts.len() > 500 {
+            session.receipts.remove(0);
+        }
         if request.checkpoint == Checkpoint::Iteration {
             break;
         }
     }
+    let facts = inspect_repo(&request.repo)?;
+    session.candidate_hash = facts.candidate_hash.clone();
+    session.head = facts.head.clone();
+    session.dirty = facts.dirty;
     save_session(&session)?;
-    let (outcome, terminal, exit_code, pending, next_actions) =
-        judge(&session, &policy, &facts, request.checkpoint, ran_failure, saw_unknown);
+    let (outcome, terminal, exit_code, pending, next_actions) = judge(
+        &session,
+        &policy,
+        &facts,
+        request.checkpoint,
+        ran_failure,
+        saw_unknown,
+    );
     Ok(finish(
         "verify",
         &session,
@@ -631,8 +815,25 @@ fn judge(
             vec!["Call prepare with --contract-file.".into()],
         );
     }
-    let gaps = contract_gaps(session.contract.as_ref());
+    let mut gaps = contract_gaps(session.contract.as_ref());
+    if !target_matches(session, facts) {
+        gaps.push("observed branch/path does not match the recorded delivery target".into());
+    }
     let required = obligation_ids(policy, session.contract.as_ref());
+    if required.is_empty() {
+        gaps.push("no mandatory verification is bound to this task".into());
+    }
+    if !required.is_empty()
+        && required.iter().all(|id| {
+            policy
+                .checks
+                .iter()
+                .find(|c| &c.id == id)
+                .is_some_and(|c| c.kind == "semantic")
+        })
+    {
+        gaps.push("a semantic assessment alone cannot certify a delivery".into());
+    }
     let mut failed = Vec::new();
     let mut unknown = Vec::new();
     let mut missing = Vec::new();
@@ -651,7 +852,7 @@ fn judge(
             true,
             3,
             weakened,
-            vec!["Restore the bound assertion or record an amendment that names the weakened check.".into()],
+            vec!["Restore the original check definition. A changed scope needs a separately authorized task, not a self-approved waiver.".into()],
         );
     }
     if checkpoint == Checkpoint::Iteration {
@@ -665,7 +866,7 @@ fn judge(
                 false,
                 2,
                 pending,
-                vec!["The failing check was kept. Change the candidate before it can run again.".into()],
+                vec!["The failing check was kept. Repair the candidate, or use --retry only after diagnosing a transient external failure.".into()],
             );
         }
         if saw_unknown || !unknown.is_empty() {
@@ -674,7 +875,7 @@ fn judge(
                 false,
                 3,
                 pending,
-                vec!["Required evidence is unknown. An unchanged candidate will not rerun it.".into()],
+                vec!["Required evidence is unknown. Diagnose it and use --retry for a transient external blocker; otherwise change the candidate.".into()],
             );
         }
         return (
@@ -682,7 +883,10 @@ fn judge(
             false,
             0,
             pending,
-            vec!["Call verify --checkpoint delivery when the slice is in the delivery target.".into()],
+            vec![
+                "Call verify --checkpoint delivery when the slice is in the delivery target."
+                    .into(),
+            ],
         );
     }
     if !failed.is_empty() || ran_failure {
@@ -693,7 +897,10 @@ fn judge(
             false,
             2,
             pending,
-            vec!["Repair the failed check. An unchanged candidate will not rerun it.".into()],
+            vec![
+                "Repair the failed check. Use --retry only for a diagnosed transient failure."
+                    .into(),
+            ],
         );
     }
     if !unknown.is_empty() || saw_unknown || !missing.is_empty() || !gaps.is_empty() {
@@ -701,7 +908,9 @@ fn judge(
         let mut pending = gaps;
         pending.extend(missing.iter().map(|id| format!("check {id} has not run")));
         pending.extend(unknown.iter().map(|id| format!("check {id} is unknown")));
-        let external = unknown.iter().any(|id| receipt_is_external(session, policy, facts, id));
+        let external = unknown
+            .iter()
+            .any(|id| receipt_is_external(session, policy, facts, id));
         let terminal = external && missing.is_empty() && no_gaps;
         return (
             "incomplete".into(),
@@ -715,13 +924,7 @@ fn judge(
             }],
         );
     }
-    (
-        "complete".into(),
-        true,
-        0,
-        Vec::new(),
-        Vec::new(),
-    )
+    ("complete".into(), true, 0, Vec::new(), Vec::new())
 }
 
 fn obligation_ids(policy: &PolicyState, contract: Option<&Contract>) -> Vec<String> {
@@ -762,26 +965,38 @@ fn matching_receipt<'a>(
     policy_sha256: &str,
 ) -> Option<&'a Receipt> {
     let argv = argv_of(spec);
+    let program_hash = runner::program_hash(Path::new(&session.repo), spec)
+        .unwrap_or_else(|_| "unavailable".into());
+    let environment = env_fingerprint(&spec.environment);
     session.receipts.iter().rev().find(|receipt| {
-        receipt.check_id == spec.id
+        receipt.request_sha256 == session.request_sha256
+            && receipt.program_sha256 == program_hash
+            && receipt.env_sha256 == environment
+            && receipt.check_id == spec.id
             && receipt.argv == argv
             && receipt.cwd == spec.cwd
             && receipt.candidate_hash == candidate_hash
             && receipt.policy_sha256 == policy_sha256
-            && (receipt.env_sha256.is_empty() || receipt.env_sha256 == env_fingerprint(&spec.environment))
-            && matches!(receipt.state.as_str(), "passed" | "reused" | "failed" | "unknown")
+            && matches!(
+                receipt.state.as_str(),
+                "passed" | "reused" | "failed" | "unknown"
+            )
     })
 }
 
 fn needs_run(spec: &CheckSpec, state: Option<&str>) -> bool {
     match state {
         None => true,
-        Some("passed") if spec.reuse == "never" || spec.external_state => true,
+        Some(_) if spec.reuse == "never" || spec.external_state => true,
         Some(_) => false,
     }
 }
 
-fn planned_ids(policy: &PolicyState, contract: Option<&Contract>, checkpoint: Checkpoint) -> Vec<String> {
+fn planned_ids(
+    policy: &PolicyState,
+    contract: Option<&Contract>,
+    checkpoint: Checkpoint,
+) -> Vec<String> {
     let ids = obligation_ids(policy, contract);
     if ids.is_empty() && checkpoint == Checkpoint::Iteration {
         policy.checks.iter().map(|check| check.id.clone()).collect()
@@ -797,238 +1012,14 @@ fn execute_check(
     policy_sha256: &str,
     request_sha256: &str,
 ) -> Result<Receipt, String> {
-    let cwd = resolve_cwd(repo, &spec.cwd)?;
-    let program = resolve_program(&cwd, &spec.program)?;
-    let started = Instant::now();
-    let mut command = Command::new(&program);
-    command
-        .args(&spec.args)
-        .current_dir(&cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    apply_noninteractive(&mut command);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            let external = matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-            );
-            return Ok(finished_receipt(
-                spec,
-                "unknown",
-                None,
-                candidate_hash,
-                policy_sha256,
-                0,
-                Vec::new(),
-                format!("cannot start check: {error}").into_bytes(),
-                false,
-                external,
-                format!("cannot start check: {error}"),
-            ));
-        }
-    };
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let stdout_handle = thread::spawn(move || read_capped(stdout));
-    let stderr_handle = thread::spawn(move || read_capped(stderr));
-    let limit = Duration::from_secs(spec.timeout_seconds.max(1));
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if started.elapsed() > limit => {
-                force_kill(&mut child);
-                let _ = child.wait();
-                break None;
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(30)),
-            Err(error) => {
-                force_kill(&mut child);
-                let _ = child.wait();
-                let stdout = stdout_handle.join().unwrap_or((Vec::new(), true));
-                let stderr = stderr_handle.join().unwrap_or((Vec::new(), true));
-                return Ok(finished_receipt(
-                    spec,
-                    "unknown",
-                    None,
-                    candidate_hash,
-                    policy_sha256,
-                    started.elapsed().as_millis(),
-                    stdout.0,
-                    stderr.0,
-                    true,
-                    false,
-                    format!("check wait failed: {error}"),
-                ));
-            }
-        }
-    };
-    let (stdout, stdout_truncated) = stdout_handle.join().unwrap_or((Vec::new(), true));
-    let (stderr, stderr_truncated) = stderr_handle.join().unwrap_or((Vec::new(), true));
-    let truncated = stdout_truncated || stderr_truncated;
-    let duration = started.elapsed().as_millis();
-    if status.is_none() {
-        return Ok(finished_receipt(
-            spec,
-            "unknown",
-            None,
-            candidate_hash,
-            policy_sha256,
-            duration,
-            stdout,
-            stderr,
-            true,
-            false,
-            "check timed out".to_string(),
-        ));
-    }
-    let code = status.and_then(|status| status.code());
-    let combined = {
-        let mut all = stdout.clone();
-        all.extend_from_slice(&stderr);
-        String::from_utf8_lossy(&all).into_owned()
-    };
-    let (mut state, mut detail) = classify_check(spec, code, &combined, truncated, request_sha256);
-    if state == "passed" {
-        if let Ok(after) = inspect_repo(repo) {
-            if after.candidate_hash != candidate_hash {
-                state = "unknown";
-                detail = "candidate changed during the check".into();
-            }
-        }
-    }
-    let external = matches!(code, Some(126) | Some(127));
-    Ok(finished_receipt(
+    runner::execute(
+        repo,
         spec,
-        state,
-        code,
         candidate_hash,
         policy_sha256,
-        duration,
-        stdout,
-        stderr,
-        truncated,
-        external,
-        detail,
-    ))
-}
-
-fn classify_check(
-    spec: &CheckSpec,
-    code: Option<i32>,
-    output: &str,
-    truncated: bool,
-    request_sha256: &str,
-) -> (&'static str, String) {
-    if truncated {
-        return ("unknown", "check output was truncated".into());
-    }
-    if code != Some(0) {
-        return (
-            "failed",
-            format!("check exited with {}", code.map(|code| code.to_string()).unwrap_or_else(|| "signal".into())),
-        );
-    }
-    if spec.minimum_tests > 0 {
-        if output.contains("running 0 tests") {
-            return ("failed", "filter selected zero tests".into());
-        }
-        match passed_count(output) {
-            Some(count) if count >= spec.minimum_tests => {}
-            Some(count) => {
-                return (
-                    "failed",
-                    format!("passed {count} tests; minimum is {}", spec.minimum_tests),
-                );
-            }
-            None => return ("failed", "minimum test count was not present in the output".into()),
-        }
-    }
-    if spec.kind == "semantic" {
-        return classify_semantic(output, request_sha256, &spec.id);
-    }
-    ("passed", "check passed".into())
-}
-
-fn classify_semantic(output: &str, request_sha256: &str, check_id: &str) -> (&'static str, String) {
-    let value: Value = match serde_json::from_str(output.trim()) {
-        Ok(value) => value,
-        Err(_) => return ("failed", "semantic answer is not JSON".into()),
-    };
-    if value.get("request_sha256").and_then(Value::as_str) != Some(request_sha256) {
-        return ("failed", "semantic answer is not bound to this request".into());
-    }
-    if value.get("evidence_id").and_then(Value::as_str) != Some(check_id) {
-        return ("failed", "semantic answer is not bound to this check".into());
-    }
-    match value.get("score").and_then(Value::as_f64) {
-        Some(score) if score.is_finite() && (0.0..=1.0).contains(&score) => {
-            ("passed", "semantic answer is well formed and does not waive other checks".into())
-        }
-        _ => ("failed", "semantic score is missing or not finite".into()),
-    }
-}
-
-fn passed_count(output: &str) -> Option<u32> {
-    for line in output.lines() {
-        let Some(index) = line.find(" passed") else {
-            continue;
-        };
-        let prefix = line[..index].trim_end();
-        let digits: String = prefix
-            .chars()
-            .rev()
-            .take_while(|ch| ch.is_ascii_digit())
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        if !digits.is_empty() {
-            return digits.parse().ok();
-        }
-    }
-    None
-}
-
-fn finished_receipt(
-    spec: &CheckSpec,
-    state: &str,
-    exit_code: Option<i32>,
-    candidate_hash: &str,
-    policy_sha256: &str,
-    duration_ms: u128,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    truncated: bool,
-    external: bool,
-    detail: String,
-) -> Receipt {
-    Receipt {
-        check_id: spec.id.clone(),
-        state: state.to_string(),
-        exit_code,
-        candidate_hash: candidate_hash.to_string(),
-        argv: argv_of(spec),
-        cwd: spec.cwd.clone(),
-        policy_sha256: policy_sha256.to_string(),
-        duration_ms,
-        stdout_sha256: sha256_hex(&stdout),
-        stderr_sha256: sha256_hex(&stderr),
-        stdout_excerpt: excerpt(&stdout),
-        stderr_excerpt: excerpt(&stderr),
-        truncated,
-        detail,
-        external,
-        env_sha256: env_fingerprint(&spec.environment),
-        kind: spec.kind.clone(),
-    }
+        request_sha256,
+        &snapshot_inputs(repo)?,
+    )
 }
 
 fn argv_of(spec: &CheckSpec) -> Vec<String> {
@@ -1052,7 +1043,12 @@ fn finish(
 ) -> Output {
     let mut timings = BTreeMap::new();
     timings.insert("total".to_string(), started.elapsed().as_millis());
-    if let Some(receipt) = session.receipts.iter().rev().find(|receipt| receipt.kind.starts_with("cargo")) {
+    if let Some(receipt) = session
+        .receipts
+        .iter()
+        .rev()
+        .find(|receipt| receipt.kind.starts_with("cargo"))
+    {
         timings.insert("next_build".to_string(), receipt.duration_ms);
     }
     let checks: Vec<EvidenceView> = policy
@@ -1060,7 +1056,8 @@ fn finish(
         .iter()
         .map(|spec| {
             let state = evidence_state(session, policy, facts, &spec.id);
-            let matched = matching_receipt(session, spec, &facts.candidate_hash, &policy.raw_sha256);
+            let matched =
+                matching_receipt(session, spec, &facts.candidate_hash, &policy.raw_sha256);
             let detail = matched
                 .map(|receipt| receipt.detail.clone())
                 .unwrap_or_else(|| "not run for this candidate".into());
@@ -1069,7 +1066,11 @@ fn finish(
                 .unwrap_or_default();
             EvidenceView {
                 id: spec.id.clone(),
-                state: if state == "missing" { "deferred".into() } else { state.into() },
+                state: if state == "missing" {
+                    "deferred".into()
+                } else {
+                    state.into()
+                },
                 detail,
                 excerpt,
             }
@@ -1077,7 +1078,12 @@ fn finish(
         .collect();
     let evidence = checks
         .iter()
-        .filter(|check| matches!(check.state.as_str(), "passed" | "reused" | "failed" | "unknown"))
+        .filter(|check| {
+            matches!(
+                check.state.as_str(),
+                "passed" | "reused" | "failed" | "unknown"
+            )
+        })
         .cloned()
         .collect();
     let envelope = Envelope {
@@ -1101,7 +1107,10 @@ fn finish(
         next_actions,
         timings_ms: timings,
         error,
-        effort: session.contract.as_ref().map(|contract| effort_view(&contract.effort)),
+        effort: session
+            .contract
+            .as_ref()
+            .map(|contract| effort_view(&contract.effort)),
         inventory: Some(inventory_view(facts)),
         checks,
         outcomes: session
@@ -1122,6 +1131,10 @@ fn finish(
             .unwrap_or_default(),
         usage: UsageView::unknown(),
         counts_in_denominator: true,
+        delivery_target: session.delivery_target.clone(),
+        assurance: serde_json::json!({"implementation":"agent_declared","requirements":"agent_mapped_not_independently_certified","checks":"observed_execution","target":"observed_path_and_branch","tamper_proof":false}),
+        policy_source: policy.source.clone(),
+        discovered_checks: policy.checks.clone(),
     };
     Output {
         exit_code,
@@ -1130,7 +1143,8 @@ fn finish(
 }
 
 fn effort_view(effort: &EffortSpec) -> EffortView {
-    let sum = u16::from(effort.uncertainty) + u16::from(effort.novelty) + u16::from(effort.coupling);
+    let sum =
+        u16::from(effort.uncertainty) + u16::from(effort.novelty) + u16::from(effort.coupling);
     let mut recommended = match sum {
         0 | 1 => "focused",
         2..=4 => "standard",
@@ -1138,7 +1152,8 @@ fn effort_view(effort: &EffortSpec) -> EffortView {
     };
     if effort.consequence == "critical" {
         recommended = "deep";
-    } else if matches!(effort.consequence.as_str(), "sensitive" | "unknown") && recommended == "focused"
+    } else if matches!(effort.consequence.as_str(), "sensitive" | "unknown")
+        && recommended == "focused"
     {
         recommended = "standard";
     }
@@ -1164,12 +1179,19 @@ fn inventory_view(facts: &RepoFacts) -> InventoryView {
         notes: facts.notes.clone(),
         disk_logical_bytes: facts.disk_logical_bytes,
         disk_allocated_bytes: facts.disk_allocated_bytes,
+        disk_scope: "snapshot inputs only; not a repository-wide disk scan".into(),
     }
 }
 
 fn render_markdown(value: &Value) -> String {
-    let outcome = value.get("outcome").and_then(Value::as_str).unwrap_or("unknown");
-    let session = value.get("session_id").and_then(Value::as_str).unwrap_or("");
+    let outcome = value
+        .get("outcome")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let session = value
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let mut lines = vec![
         "# Jacu report".to_string(),
         format!("Session: {session}"),
@@ -1179,7 +1201,10 @@ fn render_markdown(value: &Value) -> String {
         lines.push(format!(
             "Candidate: {} dirty={}",
             candidate.get("hash").and_then(Value::as_str).unwrap_or(""),
-            candidate.get("dirty").and_then(Value::as_bool).unwrap_or(false)
+            candidate
+                .get("dirty")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
         ));
     }
     lines.push("".into());
@@ -1229,7 +1254,8 @@ fn contract_gaps(contract: Option<&Contract>) -> Vec<String> {
         if outcome.implementation == "pending" || outcome.delivery == "pending" {
             gaps.push(format!("outcome {} is still pending", outcome.id));
         }
-        let active = !(outcome.implementation == "not_applicable" && outcome.delivery == "not_applicable");
+        let active =
+            !(outcome.implementation == "not_applicable" && outcome.delivery == "not_applicable");
         if active && outcome.evidence.is_empty() {
             gaps.push(format!("outcome {} has no evidence", outcome.id));
         }
@@ -1238,7 +1264,11 @@ fn contract_gaps(contract: Option<&Contract>) -> Vec<String> {
 }
 
 fn dropped_outcomes(previous: &Contract, next: &Contract) -> Vec<String> {
-    let kept: BTreeSet<&str> = next.outcomes.iter().map(|outcome| outcome.id.as_str()).collect();
+    let kept: BTreeSet<&str> = next
+        .outcomes
+        .iter()
+        .map(|outcome| outcome.id.as_str())
+        .collect();
     let allowed: BTreeSet<&str> = next
         .amendments
         .iter()
@@ -1247,14 +1277,17 @@ fn dropped_outcomes(previous: &Contract, next: &Contract) -> Vec<String> {
     previous
         .outcomes
         .iter()
-        .filter(|outcome| !kept.contains(outcome.id.as_str()) && !allowed.contains(outcome.id.as_str()))
+        .filter(|outcome| {
+            !kept.contains(outcome.id.as_str()) && !allowed.contains(outcome.id.as_str())
+        })
         .map(|outcome| outcome.id.clone())
         .collect()
 }
 
 fn read_contract(path: &Path) -> Result<Contract, String> {
-    let bytes = fs::read(path).map_err(|error| format!("cannot read contract file: {error}"))?;
-    let contract: Contract = serde_json::from_slice(&bytes).map_err(|error| format!("invalid contract: {error}"))?;
+    let bytes = read_limited(path, 262144)?;
+    let contract: Contract =
+        serde_json::from_slice(&bytes).map_err(|error| format!("invalid contract: {error}"))?;
     if contract.schema_version != SCHEMA_VERSION {
         return Err("contract schema_version must be 1".into());
     }
@@ -1268,27 +1301,50 @@ fn read_contract(path: &Path) -> Result<Contract, String> {
             return Err(format!("duplicate outcome {}", outcome.id));
         }
         if outcome.statement.trim().is_empty() || outcome.statement.chars().count() > 2000 {
-            return Err(format!("outcome {} statement must be 1 to 2000 characters", outcome.id));
+            return Err(format!(
+                "outcome {} statement must be 1 to 2000 characters",
+                outcome.id
+            ));
         }
         for field in [&outcome.implementation, &outcome.delivery] {
-            if !matches!(field.as_str(), "pending" | "present" | "not_applicable" | "in_target") {
+            if !matches!(
+                field.as_str(),
+                "pending" | "present" | "not_applicable" | "in_target"
+            ) {
                 return Err(format!("outcome {} has an invalid state", outcome.id));
             }
         }
         if outcome.implementation == "in_target" || outcome.delivery == "present" {
-            return Err(format!("outcome {} swaps implementation and delivery states", outcome.id));
+            return Err(format!(
+                "outcome {} swaps implementation and delivery states",
+                outcome.id
+            ));
         }
         if (outcome.implementation == "not_applicable" || outcome.delivery == "not_applicable")
-            && outcome.inapplicable_reason.as_deref().unwrap_or("").trim().is_empty()
+            && outcome
+                .inapplicable_reason
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
         {
-            return Err(format!("outcome {} needs an inapplicable_reason", outcome.id));
+            return Err(format!(
+                "outcome {} needs an inapplicable_reason",
+                outcome.id
+            ));
         }
     }
     validate_effort(&contract.effort)?;
     for amendment in &contract.amendments {
+        if !amendment.removes.is_empty() || !amendment.weakens.is_empty() {
+            return Err("self-declared amendments cannot remove or weaken bound obligations; retain the original task and record any authorized scope change separately".into());
+        }
         validate_id(&amendment.id, "amendment")?;
         if amendment.reason.trim().is_empty() || amendment.source.trim().is_empty() {
-            return Err(format!("amendment {} needs a reason and a source", amendment.id));
+            return Err(format!(
+                "amendment {} needs a reason and a source",
+                amendment.id
+            ));
         }
     }
     Ok(contract)
@@ -1319,7 +1375,10 @@ fn validate_effort(effort: &EffortSpec) -> Result<(), String> {
             return Err(format!("{name} must be 0, 1, or 2"));
         }
     }
-    if !matches!(effort.consequence.as_str(), "ordinary" | "sensitive" | "critical" | "unknown") {
+    if !matches!(
+        effort.consequence.as_str(),
+        "ordinary" | "sensitive" | "critical" | "unknown"
+    ) {
         return Err("consequence must be ordinary, sensitive, critical, or unknown".into());
     }
     Ok(())
@@ -1327,15 +1386,14 @@ fn validate_effort(effort: &EffortSpec) -> Result<(), String> {
 
 fn load_policy(repo: &Path) -> Result<PolicyState, String> {
     let path = repo.join(".jacu-fast.json");
-    if !path.is_file() {
-        return Ok(PolicyState {
-            raw_sha256: "none".into(),
-            checks: Vec::new(),
-            required: Vec::new(),
-        });
-    }
-    let bytes = fs::read(&path).map_err(|error| format!("cannot read .jacu-fast.json: {error}"))?;
-    let policy: PolicyFile = serde_json::from_slice(&bytes).map_err(|error| format!("invalid .jacu-fast.json: {error}"))?;
+    let configured = path.is_file();
+    let policy = if configured {
+        serde_json::from_slice::<PolicyFile>(&read_limited(&path, 262144)?)
+            .map_err(|error| format!("invalid .jacu-fast.json: {error}"))?
+    } else {
+        discover_policy(repo)?
+    };
+    let bytes = serde_json::to_vec(&policy).map_err(|e| e.to_string())?;
     if policy.schema_version != SCHEMA_VERSION {
         return Err(".jacu-fast.json schema_version must be 1".into());
     }
@@ -1345,18 +1403,38 @@ fn load_policy(repo: &Path) -> Result<PolicyState, String> {
         if !seen.insert(check.id.clone()) {
             return Err(format!("duplicate check {}", check.id));
         }
-        if check.program.trim().is_empty() || check.program.starts_with('-') || check.program.contains('\0') {
+        if check.program.trim().is_empty()
+            || check.program.starts_with('-')
+            || check.program.contains('\0')
+        {
             return Err(format!("check {} has an invalid program", check.id));
         }
         if check.timeout_seconds == 0 || check.timeout_seconds > 7200 {
-            return Err(format!("check {} timeout must be 1 to 7200 seconds", check.id));
+            return Err(format!(
+                "check {} timeout must be 1 to 7200 seconds",
+                check.id
+            ));
         }
-        if !matches!(check.reuse.as_str(), "same-session-declared-inputs" | "never") {
+        if !matches!(
+            check.reuse.as_str(),
+            "same-session-declared-inputs" | "never"
+        ) {
             return Err(format!("check {} has an unsupported reuse value", check.id));
         }
         for arg in &check.args {
             if arg.contains('\0') {
                 return Err(format!("check {} has an invalid argument", check.id));
+            }
+        }
+        if !check.minimum_score.is_finite() || !(0.0..=1.0).contains(&check.minimum_score) {
+            return Err("invalid semantic threshold".into());
+        }
+        for input in &check.inputs {
+            let _ = within(repo, input)?;
+        }
+        for key in &check.environment {
+            if key.is_empty() || !key.chars().all(|x| x.is_ascii_alphanumeric() || x == '_') {
+                return Err("invalid environment key".into());
             }
         }
         resolve_cwd(repo, &check.cwd)?;
@@ -1372,6 +1450,12 @@ fn load_policy(repo: &Path) -> Result<PolicyState, String> {
         raw_sha256: sha256_hex(&bytes),
         required: policy.delivery.required_check_ids,
         checks: policy.checks,
+        source: if configured {
+            ".jacu-fast.json"
+        } else {
+            "discovered from existing project manifests"
+        }
+        .into(),
     })
 }
 
@@ -1384,7 +1468,8 @@ fn resolve_cwd(repo: &Path, cwd: &str) -> Result<PathBuf, String> {
     } else {
         repo.join(cwd)
     };
-    let canonical = fs::canonicalize(&candidate).map_err(|error| format!("check cwd is not available: {error}"))?;
+    let canonical = fs::canonicalize(&candidate)
+        .map_err(|error| format!("check cwd is not available: {error}"))?;
     if !canonical.starts_with(repo) {
         return Err("check cwd escapes the repository".into());
     }
@@ -1399,7 +1484,8 @@ fn resolve_program(cwd: &Path, program: &str) -> Result<PathBuf, String> {
         } else {
             cwd.join(path)
         };
-        let canonical = fs::canonicalize(&candidate).map_err(|error| format!("check program is not available: {error}"))?;
+        let canonical = fs::canonicalize(&candidate)
+            .map_err(|error| format!("check program is not available: {error}"))?;
         if !path.is_absolute() && !canonical.starts_with(cwd) {
             return Err("relative check program escapes the repository".into());
         }
@@ -1409,106 +1495,20 @@ fn resolve_program(cwd: &Path, program: &str) -> Result<PathBuf, String> {
 }
 
 fn inspect_repo(requested: &Path) -> Result<RepoFacts, String> {
-    if !requested.exists() {
-        return Err("repository path does not exist".into());
-    }
-    if !requested.is_dir() {
-        return Err("repository path is not a directory".into());
-    }
-    let canonical = fs::canonicalize(requested).map_err(|error| format!("cannot read repository path: {error}"))?;
-    let mut notes = Vec::new();
-    let toplevel = git_bytes(&canonical, &["rev-parse", "--show-toplevel"]).ok();
-    let root = if let Some(bytes) = toplevel.as_ref() {
-        let text = String::from_utf8_lossy(bytes).trim().to_string();
-        let path = fs::canonicalize(&text).map_err(|error| format!("git toplevel is not readable: {error}"))?;
-        if path != canonical {
-            notes.push(format!(
-                "requested path is inside {path}",
-                path = path.display()
-            ));
-        }
-        path
-    } else {
-        notes.push("git is not available for this path".into());
-        canonical.clone()
-    };
-    let git = toplevel.is_some();
-    let head = git_bytes(&root, &["rev-parse", "HEAD"])
-        .ok()
-        .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_string())
-        .filter(|value| !value.is_empty());
-    let branch = git_bytes(&root, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .ok()
-        .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_string())
-        .filter(|value| !value.is_empty() && value != "HEAD");
-    let status_bytes = git_bytes(&root, &["status", "--porcelain=v1", "-z"]).unwrap_or_default();
-    let dirty = status_bytes.iter().any(|byte| !byte.is_ascii_whitespace());
-    let worktrees = git_bytes(&root, &["worktree", "list", "--porcelain", "-z"])
-        .map(|bytes| parse_worktrees(&bytes))
-        .unwrap_or_default();
-    if git && head.is_none() {
-        notes.push("git HEAD is not available".into());
-    }
-    for worktree in &worktrees {
-        if !Path::new(worktree).exists() {
-            notes.push(format!("worktree is missing: {worktree}"));
-        }
-    }
-    if git {
-        let has_remote = git_bytes(&root, &["remote"])
-            .ok()
-            .map(|bytes| !bytes.iter().all(u8::is_ascii_whitespace))
-            .unwrap_or(false);
-        if has_remote && git_bytes(&root, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_err() {
-            notes.push("upstream ref is not available and is not assumed safe".into());
-        }
-    }
-    let (disk_logical_bytes, disk_allocated_bytes) = measure_disk(&root);
-    let mut identity = Vec::new();
-    identity.extend_from_slice(head.as_deref().unwrap_or("").as_bytes());
-    identity.push(0);
-    identity.extend_from_slice(&status_bytes);
+    let root = inventory::root(requested)?;
+    let facts = inventory::inspect(&root, &snapshot_inputs(&root)?)?;
     Ok(RepoFacts {
-        candidate_hash: sha256_hex(&identity),
-        canonical: root,
-        git,
-        head,
-        branch,
-        dirty,
-        worktrees,
-        notes,
-        disk_logical_bytes,
-        disk_allocated_bytes,
+        canonical: facts.root,
+        git: facts.git,
+        head: facts.head,
+        branch: facts.branch,
+        dirty: facts.dirty,
+        worktrees: facts.worktrees,
+        notes: facts.notes,
+        candidate_hash: facts.hash,
+        disk_logical_bytes: facts.logical_bytes,
+        disk_allocated_bytes: facts.allocated_bytes,
     })
-}
-
-fn parse_worktrees(bytes: &[u8]) -> Vec<String> {
-    String::from_utf8_lossy(bytes)
-        .split('\0')
-        .filter_map(|field| field.strip_prefix("worktree ").map(str::to_string))
-        .collect()
-}
-
-fn git_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    apply_noninteractive(&mut command);
-    let child = command.spawn().map_err(|error| format!("cannot run git: {error}"))?;
-    let output = child.wait_with_output().map_err(|error| format!("git failed: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(output.stdout)
 }
 
 fn data_root() -> Result<PathBuf, String> {
@@ -1542,24 +1542,42 @@ fn load_session(facts: &RepoFacts, session_id: &str) -> Result<Option<Session>, 
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = fs::read(&path).map_err(|error| format!("cannot read session: {error}"))?;
-    serde_json::from_slice(&bytes).map(Some).map_err(|_| "session record is corrupt".to_string())
+    let bytes = read_limited(&path, 4194304)?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| "session record is corrupt".to_string())
 }
 
 fn save_session(session: &Session) -> Result<(), String> {
     let path = session_path(&session.repo_key, &session.session_id)?;
     let parent = path.parent().ok_or("session path has no parent")?;
-    fs::create_dir_all(parent).map_err(|error| format!("cannot create session directory: {error}"))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create session directory: {error}"))?;
     let bytes = serde_json::to_vec_pretty(session).map_err(|error| error.to_string())?;
     let tmp = parent.join(format!(
-        ".{}.tmp-{}",
+        ".{}.tmp-{}-{}",
         session.session_id,
-        std::process::id()
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     ));
     {
-        let mut file = fs::File::create(&tmp).map_err(|error| format!("cannot write session: {error}"))?;
-        file.write_all(&bytes).map_err(|error| format!("cannot write session: {error}"))?;
-        file.sync_all().ok();
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&tmp)
+            .map_err(|error| format!("cannot write session: {error}"))?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("cannot write session: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("cannot persist session: {error}"))?;
     }
     fs::rename(&tmp, &path).map_err(|error| format!("cannot commit session: {error}"))?;
     Ok(())
@@ -1567,54 +1585,52 @@ fn save_session(session: &Session) -> Result<(), String> {
 
 fn lock_session(repo_key: &str, session_id: &str) -> Result<Lock, String> {
     let dir = data_root()?.join("locks");
-    fs::create_dir_all(&dir).map_err(|error| format!("cannot create lock directory: {error}"))?;
-    let path = dir.join(format!("{repo_key}-{session_id}.lock"));
-    for _ in 0..40 {
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                let _ = writeln!(file, "{}", std::process::id());
-                return Ok(Lock { path });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                if let Ok(text) = fs::read_to_string(&path) {
-                    if let Ok(pid) = text.trim().parse::<i32>() {
-                        if !pid_alive(pid) {
-                            let _ = fs::remove_file(&path);
-                            continue;
-                        }
-                    }
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-            Err(error) => return Err(format!("cannot lock session: {error}")),
-        }
-    }
-    Err("session lock is held by another jacu process".into())
-}
-
-fn pid_alive(pid: i32) -> bool {
-    if pid <= 0 {
-        return false;
-    }
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join(format!("{repo_key}-{session_id}.lock")))
+        .map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
-        let rc = unsafe { libc::kill(pid, 0) };
-        if rc == 0 {
-            return true;
+        use std::os::fd::AsRawFd;
+        let start = Instant::now();
+        loop {
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                break;
+            }
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::EWOULDBLOCK) {
+                return Err(error.to_string());
+            }
+            if start.elapsed() > Duration::from_secs(5) {
+                return Err("session lock is held by another jacu process".into());
+            }
+            thread::sleep(Duration::from_millis(25));
         }
-        return std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
     }
     #[cfg(not(unix))]
     {
-        true
+        return Err(
+            "runtime locking requires macOS or Linux; use skill-only mode on this platform".into(),
+        );
     }
+    #[allow(unreachable_code)]
+    Ok(Lock { file })
 }
 
 fn validate_session_id(id: &str) -> Result<(), String> {
     let ok = !id.is_empty()
         && id.len() <= 80
-        && id.chars().next().is_some_and(|ch| ch.is_ascii_alphanumeric())
-        && id.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'));
+        && id
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric())
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'));
     if ok {
         Ok(())
     } else {
@@ -1625,7 +1641,9 @@ fn validate_session_id(id: &str) -> Result<(), String> {
 fn validate_id(id: &str, label: &str) -> Result<(), String> {
     let ok = !id.is_empty()
         && id.len() <= 64
-        && id.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'));
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'));
     if ok {
         Ok(())
     } else {
@@ -1657,50 +1675,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     encoded
 }
 
-fn excerpt(bytes: &[u8]) -> String {
-    let take = bytes.len().min(1200);
-    String::from_utf8_lossy(&bytes[..take]).into_owned()
-}
-
-fn read_capped(pipe: Option<impl Read>) -> (Vec<u8>, bool) {
-    let mut reader = match pipe {
-        Some(reader) => reader,
-        None => return (Vec::new(), false),
-    };
-    let mut kept = Vec::new();
-    let mut buffer = [0_u8; 8192];
-    let mut truncated = false;
-    loop {
-        let read = match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => count,
-            Err(_) => {
-                truncated = true;
-                break;
-            }
-        };
-        if kept.len() < OUTPUT_CAP {
-            let room = OUTPUT_CAP - kept.len();
-            let take = read.min(room);
-            kept.extend_from_slice(&buffer[..take]);
-            if take < read {
-                truncated = true;
-            }
-        } else {
-            truncated = true;
-        }
-    }
-    (kept, truncated)
-}
-
-fn force_kill(child: &mut Child) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
-    let _ = child.kill();
-}
-
 impl UsageView {
     fn unknown() -> Self {
         Self {
@@ -1711,30 +1685,8 @@ impl UsageView {
     }
 }
 
-fn apply_noninteractive(command: &mut Command) {
-    command
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never")
-        .env("GIT_PAGER", "cat")
-        .env("PAGER", "cat")
-        .env("GIT_EDITOR", "true")
-        .env("EDITOR", "true")
-        .env("VISUAL", "true");
-}
-
 fn env_fingerprint(keys: &[String]) -> String {
-    if keys.is_empty() {
-        return "none".into();
-    }
-    let mut lines = Vec::new();
-    for key in keys {
-        if !key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
-            continue;
-        }
-        let value = std::env::var(key).unwrap_or_default();
-        lines.push(format!("{key}={}", sha256_hex(value.as_bytes())));
-    }
-    sha256_hex(lines.join("\n").as_bytes())
+    runner::environment_hash(keys)
 }
 
 fn minimum_map(policy: &PolicyState, contract: &Contract) -> BTreeMap<String, u32> {
@@ -1768,7 +1720,9 @@ fn weaken_conflict(
                 return Some(format!("check {id} was removed without an amendment"));
             }
             Some(current) if current < previous && !allowed.contains(id.as_str()) => {
-                return Some(format!("check {id} assertion was weakened without an amendment"));
+                return Some(format!(
+                    "check {id} assertion was weakened without an amendment"
+                ));
             }
             _ => {}
         }
@@ -1786,13 +1740,32 @@ fn weakened_pending(session: &Session, policy: &PolicyState) -> Vec<String> {
         .flat_map(|amendment| amendment.weakens.iter().map(String::as_str))
         .collect();
     let mut pending = Vec::new();
+    if session
+        .bound_required
+        .iter()
+        .any(|id| !policy.required.contains(id))
+    {
+        pending.push("mandatory delivery check was removed".into());
+    }
+    for (id, bound) in &session.bound_checks {
+        if policy
+            .checks
+            .iter()
+            .find(|c| &c.id == id)
+            .is_some_and(|c| check_definition(c) != *bound)
+        {
+            pending.push(format!("bound check {id} definition was changed"));
+        }
+    }
     for (id, bound) in &session.bound_minimums {
         match policy.checks.iter().find(|check| &check.id == id) {
             None if !allowed.contains(id.as_str()) => {
                 pending.push(format!("check {id} was removed without an amendment"));
             }
             Some(check) if check.minimum_tests < *bound && !allowed.contains(id.as_str()) => {
-                pending.push(format!("check {id} assertion was weakened without an amendment"));
+                pending.push(format!(
+                    "check {id} assertion was weakened without an amendment"
+                ));
             }
             _ => {}
         }
@@ -1805,7 +1778,11 @@ fn validate_context(contract: &Contract, repo: &Path) -> Result<(), String> {
         let opaque = item.id.starts_with('f')
             && item.id.len() > 1
             && item.id[1..].chars().all(|ch| ch.is_ascii_digit());
-        let shaped = item.id.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic())
+        let shaped = item
+            .id
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic())
             && item
                 .id
                 .chars()
@@ -1816,67 +1793,28 @@ fn validate_context(contract: &Contract, repo: &Path) -> Result<(), String> {
         if item.path.starts_with('/') || item.path.split(['/', '\\']).any(|part| part == "..") {
             return Err(format!("context path {} escapes the repository", item.path));
         }
-        if !repo.join(&item.path).is_file() {
-            return Err(format!("context path {} is not in the current tree", item.path));
+        if !within(repo, &item.path)?.is_file() {
+            return Err(format!(
+                "context path {} is not in the current tree",
+                item.path
+            ));
         }
     }
     Ok(())
 }
 
-fn receipt_is_external(session: &Session, policy: &PolicyState, facts: &RepoFacts, id: &str) -> bool {
+fn receipt_is_external(
+    session: &Session,
+    policy: &PolicyState,
+    facts: &RepoFacts,
+    id: &str,
+) -> bool {
     let Some(spec) = policy.checks.iter().find(|check| &check.id == id) else {
         return false;
     };
     matching_receipt(session, spec, &facts.candidate_hash, &policy.raw_sha256)
         .map(|receipt| receipt.external)
         .unwrap_or(false)
-}
-
-fn measure_disk(root: &Path) -> (u64, u64) {
-    let mut logical = 0_u64;
-    let mut allocated = 0_u64;
-    let mut seen = BTreeSet::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = match fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            if entry.file_name() == ".git" {
-                continue;
-            }
-            let path = entry.path();
-            let meta = match fs::symlink_metadata(&path) {
-                Ok(meta) => meta,
-                Err(_) => continue,
-            };
-            if meta.file_type().is_symlink() {
-                logical += meta.len();
-                continue;
-            }
-            if meta.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::MetadataExt;
-                if !seen.insert((meta.dev(), meta.ino())) {
-                    continue;
-                }
-                logical += meta.len();
-                allocated += meta.blocks() * 512;
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = &seen;
-                logical += meta.len();
-                allocated += meta.len();
-            }
-        }
-    }
-    (logical, allocated)
 }
 
 fn write_diagnostic(session: &Session) -> Result<(), String> {
@@ -1907,6 +1845,8 @@ pub fn capabilities() -> Output {
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
         "effort_application": "advisory_only",
+        "snapshot": "tracked_and_untracked_content_v2",
+        "delivery_target": "pinned_path_and_branch",
         "compiles_on_missing_binary": false,
         "commands": ["prepare", "verify", "report", "clean", "capabilities"],
         "usage": {"input_tokens": null, "output_tokens": null, "cost": null}
@@ -1971,7 +1911,14 @@ fn verify_hook_inner(request: HookRequest, started: Instant) -> Result<Output, S
             vec!["Hook evaluation did not run project commands.".into()],
         )
     } else {
-        judge(&session, &policy, &facts, Checkpoint::Delivery, false, false)
+        judge(
+            &session,
+            &policy,
+            &facts,
+            Checkpoint::Delivery,
+            false,
+            false,
+        )
     };
     Ok(finish(
         "verify",
@@ -1989,87 +1936,80 @@ fn verify_hook_inner(request: HookRequest, started: Instant) -> Result<Output, S
 }
 
 pub fn clean(repo: PathBuf) -> Output {
-    let started = Instant::now();
-    match clean_inner(&repo, started) {
+    match clean_inner(&repo) {
         Ok(output) => output,
         Err(message) => invalid_output("clean", &message),
     }
 }
 
-fn clean_inner(repo: &Path, started: Instant) -> Result<Output, String> {
-    let facts = inspect_repo(repo)?;
+fn clean_inner(repo: &Path) -> Result<Output, String> {
+    let start = Instant::now();
+    let root = inventory::root(repo)?;
+    let key = sha256_hex(root.to_string_lossy().as_bytes())[..32].to_string();
+    let dir = data_root()?.join("diagnostics").join(&key);
     let ttl = std::env::var("JACU_DIAGNOSTIC_TTL_SECONDS")
         .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(7 * 24 * 60 * 60);
-    let root = data_root()?.join("diagnostics");
-    let mut removed_bytes = 0_u64;
+        .and_then(|x| x.parse::<u64>().ok())
+        .unwrap_or(604800);
     let mut removed = Vec::new();
-    if root.is_dir() {
-        let mut dirs = vec![root];
-        while let Some(dir) = dirs.pop() {
-            let entries = fs::read_dir(&dir).map_err(|error| format!("cannot read diagnostics: {error}"))?;
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    dirs.push(path);
-                    continue;
-                }
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if name.starts_with("active-") || !name.ends_with(".json") {
-                    continue;
-                }
-                let owned = path.with_file_name(format!(
-                    "{}.owned",
-                    name.trim_end_matches(".json")
-                ));
-                let Ok(body) = fs::read(&path) else { continue };
-                let Ok(expected) = fs::read_to_string(&owned) else { continue };
-                if expected.trim() != sha256_hex(&body) {
-                    continue;
-                }
-                let modified = fs::metadata(&path).and_then(|meta| meta.modified()).ok();
-                let old_enough = modified
-                    .and_then(|time| time.elapsed().ok())
-                    .map(|age| age.as_secs() >= ttl)
-                    .unwrap_or(false);
-                if !old_enough {
-                    continue;
-                }
-                removed_bytes += body.len() as u64;
-                let _ = fs::remove_file(&path);
-                let _ = fs::remove_file(&owned);
-                removed.push(name.to_string());
+    let mut reclaimed = 0u64;
+    if dir.exists() {
+        if fs::symlink_metadata(&dir)
+            .map_err(|e| e.to_string())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err("diagnostics directory must not be a symlink".into());
+        }
+        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("active-")
+                || !name.ends_with(".json")
+                || !entry.file_type().map_err(|e| e.to_string())?.is_file()
+            {
+                continue;
+            }
+            let id = name.trim_end_matches(".json");
+            if validate_id(id, "session").is_err() {
+                continue;
+            }
+            let owned = dir.join(format!("{id}.owned"));
+            if fs::symlink_metadata(&owned)
+                .map(|m| !m.is_file() || m.file_type().is_symlink())
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            let Ok(body) = read_limited(&path, 8192) else {
+                continue;
+            };
+            let Ok(hash) = fs::read_to_string(&owned) else {
+                continue;
+            };
+            if sha256_hex(&body) != hash.trim() {
+                continue;
+            }
+            let old = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|d| d.as_secs() >= ttl);
+            if !old {
+                continue;
+            }
+            // Diagnostics contain only regenerable identifiers, never work or receipts.
+            if fs::remove_file(&path).is_ok() {
+                let _ = fs::remove_file(owned);
+                reclaimed += body.len() as u64;
+                removed.push(name);
             }
         }
     }
-    let mut timings = BTreeMap::new();
-    timings.insert("total".to_string(), started.elapsed().as_millis());
-    let body = serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "binary_version": VERSION,
-        "command": "clean",
-        "outcome": "complete",
-        "terminal": true,
-        "exit_code": 0,
-        "candidate": {
-            "repo": facts.canonical,
-            "hash": facts.candidate_hash,
-            "dirty": facts.dirty
-        },
-        "removed": removed,
-        "reclaimed_bytes": removed_bytes,
-        "pending": [],
-        "next_actions": [],
-        "timings_ms": timings,
-        "usage": {"input_tokens": null, "output_tokens": null, "cost": null},
-        "counts_in_denominator": true
-    });
-    Ok(Output {
-        exit_code: 0,
-        body: body.to_string(),
-    })
+    Ok(Output { exit_code: 0, body: serde_json::json!({"schema_version":SCHEMA_VERSION,"binary_version":VERSION,"command":"clean","outcome":"complete","terminal":true,
+        "removed":removed,"reclaimed_bytes":reclaimed,"pending":[],"next_actions":[],"timings_ms":{"total":start.elapsed().as_millis()},"usage":serde_json::json!({"input_tokens":null,"output_tokens":null,"cost":null}),"counts_in_denominator":true}).to_string() })
 }
 
 fn empty_candidate() -> CandidateView {
@@ -2080,4 +2020,113 @@ fn empty_candidate() -> CandidateView {
         hash: String::new(),
         git: false,
     }
+}
+
+fn discover_policy(root: &Path) -> Result<PolicyFile, String> {
+    let mut checks = Vec::new();
+    let make = |id: &str, kind: &str, program: &str, args: Vec<&str>| -> CheckSpec {
+        CheckSpec {
+            id: id.into(),
+            kind: kind.into(),
+            program: program.into(),
+            args: args.into_iter().map(String::from).collect(),
+            cwd: ".".into(),
+            timeout_seconds: 600,
+            minimum_tests: if kind.contains("test") { 1 } else { 0 },
+            reuse: "never".into(),
+            external_state: false,
+            environment: Vec::new(),
+            inputs: Vec::new(),
+            minimum_score: score_default(),
+        }
+    };
+    if root.join("Cargo.toml").is_file() {
+        checks.push(make(
+            "cargo-tests",
+            "cargo-test",
+            "cargo",
+            vec!["test", "--locked"],
+        ));
+    }
+    if root.join("go.mod").is_file() {
+        checks.push(make(
+            "go-tests",
+            "go-test",
+            "go",
+            vec!["test", "-json", "./..."],
+        ));
+    }
+    if root.join("Package.swift").is_file() {
+        checks.push(make("swift-tests", "swift-test", "swift", vec!["test"]));
+    }
+    if root.join("package.json").is_file() {
+        let manifest: Value =
+            serde_json::from_slice(&read_limited(&root.join("package.json"), 256 * 1024)?)
+                .map_err(|e| format!("invalid package.json: {e}"))?;
+        let manager = if root.join("pnpm-lock.yaml").is_file() {
+            "pnpm"
+        } else if root.join("yarn.lock").is_file() {
+            "yarn"
+        } else if root.join("bun.lock").is_file() || root.join("bun.lockb").is_file() {
+            "bun"
+        } else {
+            "npm"
+        };
+        for key in ["typecheck", "lint", "test"] {
+            if manifest["scripts"][key]
+                .as_str()
+                .is_some_and(|v| !v.trim().is_empty())
+            {
+                checks.push(make(
+                    &format!("node-{key}"),
+                    if key == "test" {
+                        "node-test"
+                    } else {
+                        "external"
+                    },
+                    manager,
+                    vec!["run", key],
+                ));
+            }
+        }
+    }
+    let ids = checks.iter().map(|c| c.id.clone()).collect();
+    Ok(PolicyFile {
+        schema_version: SCHEMA_VERSION,
+        checks,
+        delivery: DeliverySpec {
+            required_check_ids: ids,
+        },
+    })
+}
+
+fn check_definition(check: &CheckSpec) -> String {
+    sha256_hex(&serde_json::to_vec(check).unwrap_or_default())
+}
+fn target_matches(session: &Session, facts: &RepoFacts) -> bool {
+    session
+        .delivery_target
+        .as_ref()
+        .is_some_and(|t| Path::new(&t.path) == facts.canonical && t.branch == facts.branch)
+}
+fn validate_revision(previous: &Contract, next: &Contract) -> Result<(), String> {
+    for old in &previous.outcomes {
+        let new = next
+            .outcomes
+            .iter()
+            .find(|o| o.id == old.id)
+            .ok_or_else(|| format!("contract drops outcome {}", old.id))?;
+        if old.statement != new.statement
+            || old.source_quote != new.source_quote
+            || old.inapplicable_reason != new.inapplicable_reason
+        {
+            return Err(format!("bound outcome {} was rewritten", old.id));
+        }
+        if old.evidence.iter().any(|id| !new.evidence.contains(id))
+            || (old.implementation != "not_applicable" && new.implementation == "not_applicable")
+        {
+            return Err(format!("bound outcome {} was weakened", old.id));
+        }
+    }
+    Ok(())
 }
