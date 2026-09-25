@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Static checks for the skill-only package. This does not install a plugin."""
+"""Static checks for the plugin package. This does not install a plugin."""
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -43,8 +44,8 @@ def main() -> None:
         claude_manifest.get("version"),
         marketplace["plugins"][0].get("version"),
     }
-    if versions != {"0.0.2"}:
-        fail(f"expected version 0.0.2 in all three manifests, found {versions}")
+    if versions != {"0.1.0"}:
+        fail(f"expected version 0.1.0 in all three manifests, found {versions}")
     if marketplace["plugins"][0]["source"] != "./":
         fail("marketplace plugin source must stay ./ for this git repository")
     if marketplace["plugins"][0]["name"] != "jacu-fast":
@@ -58,15 +59,22 @@ def main() -> None:
         fail("skill name must be jacu-fast")
     if "disable-model-invocation: true" not in frontmatter:
         fail("skill must disable model invocation")
-    if "contains no Jacu executable" not in skill:
-        fail("skill must state that this release has no executable")
-    for forbidden in ("Use `prepare`", "Use `verify`", "Use `report`"):
-        if forbidden in skill:
-            fail(f"skill still requires a future command: {forbidden}")
-    runtime = ROOT / "skills" / "jacu-fast" / "references" / "runtime.md"
-    if "does not ship a `jacu` executable" not in runtime.read_text(encoding="utf-8"):
-        fail("runtime reference must say the executable is not shipped")
-    print("PASS: manifests, skill frontmatter, and version 0.0.2")
+    if "bin/jacu" not in skill:
+        fail("skill must point at the packaged bin/jacu executable")
+    if "contains no Jacu executable" in skill:
+        fail("skill still describes a skill-only release")
+    runtime = (ROOT / "skills" / "jacu-fast" / "references" / "runtime.md").read_text(encoding="utf-8")
+    if "Version 0.1.0 ships `bin/jacu`" not in runtime:
+        fail("runtime reference must name the 0.1.0 executable")
+    binary = ROOT / "bin" / "jacu"
+    if not binary.is_file():
+        fail("bin/jacu is missing")
+    if not os.access(binary, os.X_OK):
+        fail("bin/jacu is not executable")
+    magic = binary.read_bytes()[:4]
+    if magic not in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"):
+        fail("bin/jacu is not a macOS executable")
+    print("PASS: manifests, skill frontmatter, version 0.1.0, and bin/jacu")
 
 
 if __name__ == "__main__":

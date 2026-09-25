@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "jacu-fast",
-  "version": "0.0.2",
-  "description": "Skill-only workflow for complete, evidenced development. This version does not include the jacu command.",
+  "version": "0.1.0",
+  "description": "Workflow plugin with the jacu command for macOS Apple Silicon and the jacu-fast skill.",
   "author": {
     "name": "jacu-dev"
   },

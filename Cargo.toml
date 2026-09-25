@@ -1,0 +1,29 @@
+[package]
+name = "jacu-fast"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "prepare, verify, and report for one coding-agent task"
+autobins = false
+autotests = true
+
+[lib]
+name = "jacu_fast"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jacu"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.182"
+
+[dev-dependencies]
+serde_json = "1.0.145"

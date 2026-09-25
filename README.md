@@ -4,11 +4,11 @@ Jacu Fast is a workflow for coding agents. It shortens the path to a change that
 
 A faster "done" message is not the goal. A missing requirement, a skipped test, or work left in another worktree still counts as unfinished.
 
-Version 0.0.2 is the skill and the specification. The Rust command, `jacu`, is described in [the plan](docs/IMPLEMENTATION_PLAN.md) and is not in this release. Installing the skill does not install a binary, and it does not make a test suite faster on its own. Nothing in this release requires macOS 14 or any other specific operating-system version.
+Version 0.1.0 ships the skill and the `jacu` executable for macOS Apple Silicon. The binary in this repository is `bin/jacu`. It implements `prepare`, `verify`, and `report`. It does not include Linux or Windows builds, and it does not by itself make a test suite faster. The broader design remains in [the plan](docs/IMPLEMENTATION_PLAN.md).
 
 ## Install
 
-These are two different installs. The marketplace plugin is what Claude Code loads. The skills installer only copies the skill file into an agent's skill directory. Neither one installs a `jacu` binary.
+These are two different installs. The marketplace plugin is what Claude Code loads, including `bin/jacu` on macOS Apple Silicon. The skills installer only copies the skill file into an agent's skill directory. Copying the skill alone does not install the executable.
 
 ### Claude Code
 
@@ -49,7 +49,7 @@ Remove it:
 npx --yes skills remove jacu-fast -g -y
 ```
 
-The installed skill uses the project's own checks. It must not search for or run `jacu`, and it must not invent timings or a passing result.
+The installed skill uses the packaged `bin/jacu` when this plugin is what loaded it. A skill copied without that binary must say the executable is unavailable. It must not invent timings or a passing result.
 
 ## What the agent does
 
@@ -63,13 +63,19 @@ The skill keeps the current session. It does not start another agent, switch mod
 
 A real blocker ends as incomplete, with the missing piece named. There is no Jacu approval prompt.
 
-The command contract for a later executable is in [skills/jacu-fast/references/runtime.md](skills/jacu-fast/references/runtime.md). Those commands are not in version 0.0.2.
+The command contract is in [skills/jacu-fast/references/runtime.md](skills/jacu-fast/references/runtime.md). On macOS Apple Silicon, run the packaged binary:
+
+```bash
+bin/jacu --version
+```
 
 ## What is in this repository
 
 | Path | Contents |
 | --- | --- |
+| `bin/jacu` | macOS Apple Silicon executable |
 | `skills/jacu-fast/` | The skill the installer copies |
+| `src/` | The Rust source for `jacu` |
 | `docs/IMPLEMENTATION_PLAN.md` | The engineering specification |
 | `docs/acceptance-cases.json` | The checklist the CLI must pass before a release can claim those behaviors |
 | `examples/policy.json` | A synthetic example of a future check policy |

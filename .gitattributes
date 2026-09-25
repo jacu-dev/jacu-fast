@@ -1,0 +1,2 @@
+bin/jacu binary linguist-generated
+*.sh text eol=lf

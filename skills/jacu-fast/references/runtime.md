@@ -1,6 +1,6 @@
 # Jacu Fast Runtime Reference
 
-Version 0.0.2 does not ship a `jacu` executable. Do not run the commands below. This file is the contract for a later release, after that executable exists and its acceptance tests have passed. Release packaging must keep this reference aligned with the actual CLI.
+Version 0.1.0 ships `bin/jacu` for macOS Apple Silicon. The commands below are the contract for that binary. Release packaging must keep this reference aligned with the actual CLI. Linux and Windows builds are not in this package.
 
 ## Command lifecycle
 
@@ -13,7 +13,7 @@ jacu verify --repo PATH --session ID --checkpoint delivery --format json
 jacu report --repo PATH --session ID --format json
 ```
 
-Use the packaged absolute executable path. Write request/contract payloads through existing host file tools, with bounded private storage; never interpolate task text into a shell command.
+Use the packaged absolute executable path. Write request/contract payloads through existing host file tools. Session records go under `JACU_HOME`, or `~/.jacu-fast` when that variable is unset. They are not written into the target repository. Never interpolate task text into a shell command.
 
 The first preparation may inventory context before the current agent submits a compact contract for the same session. Skip redundant preparation when the request is already structured. `verify` selects outstanding checks from the known policy, not arbitrary model-generated commands.
 
