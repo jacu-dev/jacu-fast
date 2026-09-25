@@ -4,7 +4,7 @@ Jacu Fast is a workflow for coding agents. It shortens the path to a change that
 
 A faster "done" message is not the goal. A missing requirement, a skipped test, or work left in another worktree still counts as unfinished.
 
-Version 0.1.0 ships the skill and the `jacu` executable for macOS Apple Silicon. The binary in this repository is `bin/jacu`. It implements `prepare`, `verify`, and `report`. It does not include Linux or Windows builds, and it does not by itself make a test suite faster. The broader design remains in [the plan](docs/IMPLEMENTATION_PLAN.md).
+Version 0.2.0 is the installable plugin: the skill, the manifests, and `bin/jacu` for macOS Apple Silicon. `prepare`, `verify`, `report`, `clean`, and `capabilities` are implemented. `cargo test` runs the acceptance cases in `docs/acceptance-cases.json`. The same tests run on Linux in CI. This repository does not contain a Linux or Windows executable.
 
 ## Install
 

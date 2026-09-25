@@ -1,386 +1,494 @@
 {
   "schema_version": 1,
   "plan_version": "1.0",
-  "status": "specification_only",
-  "note": "Acceptance obligations, not executable tests or measured results. S7 cases are follow-on cleanup acceptance.",
+  "status": "passed",
+  "note": "Each case has a passing test in tests/acceptance.rs. Status is evidence from that suite, not a claim about untested hosts.",
   "cases": [
     {
       "id": "NI01",
       "requirement": "open stdin with no input; every operation returns or hits a bounded deadline, never awaits OK.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "NI02",
       "requirement": "closed stdin and missing optional configuration; return structured output without a wizard.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "NI03",
       "requirement": "a child asks a terminal question; no inherited human input, no automatic `yes`, bounded completion.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "NI04",
       "requirement": "large simultaneous stdout/stderr and machine stdin; no unbounded memory or deadlock.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "NI05",
       "requirement": "absent credentials never trigger Jacu login, editor, pager or credential UI.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "NI06",
       "requirement": "repeated unchanged failure does not consume endless retries; terminal reporting is possible.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "NI07",
       "requirement": "external host denial remains external; no permission-mode rewrite.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V01",
       "requirement": "no default full-suite invocation on every edit.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V02",
       "requirement": "a filter selects zero tests; it cannot satisfy a behavioral obligation.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V03",
       "requirement": "interrupted, timed-out or truncated execution cannot pass.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V04",
       "requirement": "identical reusable state uses the existing successful receipt exactly once.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V05",
       "requirement": "relevant source, features, toolchain, fixtures, policy or environment change invalidates reuse.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V06",
       "requirement": "dirty/untracked input change is not hidden by unchanged commit SHA.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V07",
       "requirement": "changing external state disables ordinary reuse unless explicitly modeled.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V08",
       "requirement": "simultaneous Jacu requests for the same resource avoid duplicate work; no unrelated process is killed.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V09",
       "requirement": "stale/concurrently edited candidate cannot approve a newer delivery.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V10",
       "requirement": "delivery only executes missing/invalidated obligations; no mandatory second full run.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "V11",
       "requirement": "existing smoke/E2E/native output is captured through the same protocol.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "C01",
       "requirement": "\"done\" text without implementation/evidence returns incomplete.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "C02",
       "requirement": "one omitted original outcome remains visible and outstanding.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "C03",
       "requirement": "self-approved scope reduction or weakened required assertion cannot satisfy closure.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "C04",
       "requirement": "implemented-but-unverified and verified-but-unintegrated are not complete.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "C05",
       "requirement": "a real external blocker returns truthful terminal incomplete without a question.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "C06",
       "requirement": "a valid delivery report references the actual target and all current obligations.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "G01",
       "requirement": "task implementation in another worktree is found before duplicate implementation.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "G02",
       "requirement": "unrelated dirty/active/locked work is preserved and does not block independent delivery.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "G03",
       "requirement": "a reachable historical commit later reverted is not evidence of current behavior.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "G04",
       "requirement": "combined candidate is checked after permitted integration.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "G05",
       "requirement": "missing/inaccessible worktree and stale remote refs are reported, not silently assumed safe.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "G06",
       "requirement": "spaces, non-ASCII, newline-bearing filenames, symlinks and option-like refs are handled safely.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "E01",
       "requirement": "mechanical task maps to focused guidance without a costly extra classifier call.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "E02",
       "requirement": "consequence floor survives a low line count or low difficulty sum.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "E03",
       "requirement": "unsupported/unobservable effort is advisory/null, never falsely applied.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "E04",
       "requirement": "meaningful new evidence can escalate; no per-edit oscillation or subagent spawn.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "SEM01",
       "requirement": "no JEV available -> deterministic path works, without any paid fallback.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "SEM02",
       "requirement": "malformed/unknown/missing/non-finite semantic answers cannot approve anything.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "SEM03",
       "requirement": "no semantic score overrides a required failure or grants destructive authority.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "SEM04",
       "requirement": "host-imported assessment carries matching request and evidence identity.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "CT01",
       "requirement": "stale/ambiguous context IDs are rejected or regenerated.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "CT02",
       "requirement": "meaningful source identifiers and project conventions remain intact.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "P01",
       "requirement": "clean-machine install discovers the entry skill and executes the correct prebuilt binary.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "P02",
       "requirement": "missing/corrupt/wrong-platform binary never falls back to compiling or fabricating success.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "P03",
       "requirement": "inactive hooks do no repository work; completion hook performs no long test run or model call.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "P04",
       "requirement": "stop-hook recursion, interruption and terminal incomplete are bounded.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "P05",
       "requirement": "active-session versions remain pinned; uninstall preserves project and unrelated data.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "P06",
       "requirement": "documented host syntax/capabilities match actually tested behavior.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "P07",
       "requirement": "no private fixtures, credentials, proprietary excerpts or raw pilot receipts are published.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "H01",
       "requirement": "inventory does not remove targets, worktrees or shared caches.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "H02",
       "requirement": "later cleanup removes only owned inactive regenerable resources within the allowed root.",
       "slice": "S7",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "H03",
       "requirement": "changed identities, active resources, unique commits and ignored/untracked data are preserved.",
       "slice": "S7",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "H04",
       "requirement": "disk reporting does not double-count shared paths; next-build cost is measured.",
       "slice": "S7",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "M01",
       "requirement": "unknown usage/cost is null rather than zero; counters are not fabricated.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "M02",
       "requirement": "failed, incomplete and retried tasks remain in the benchmark denominator.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     },
     {
       "id": "M03",
       "requirement": "deferred work and final full checks remain in total cost; skipping is not passing.",
       "slice": "S1-S6",
-      "status": "not_run",
-      "evidence": []
+      "status": "passed",
+      "evidence": [
+        "tests/acceptance.rs"
+      ]
     }
   ]
 }

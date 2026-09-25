@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use jacu_fast::{
-    invalid_output, prepare, report, verify, Checkpoint, PrepareRequest, ReportFormat, ReportRequest,
-    VerifyRequest,
+    capabilities, clean, invalid_output, prepare, report, verify, verify_hook, Checkpoint, HookRequest,
+    PrepareRequest, ReportFormat, ReportRequest, VerifyRequest,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -34,14 +34,16 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = FormatArg::Json)]
         format: FormatArg,
     },
-    /// Run the next check, or the delivery set.
+    /// Run the next check, the delivery set, or a no-exec hook evaluation.
     Verify {
         #[arg(long)]
         repo: PathBuf,
         #[arg(long)]
         session: String,
-        #[arg(long, value_enum)]
+        #[arg(long, value_enum, default_value_t = CheckpointArg::Delivery)]
         checkpoint: CheckpointArg,
+        #[arg(long)]
+        hook: Option<String>,
         #[arg(long, value_enum, default_value_t = FormatArg::Json)]
         format: FormatArg,
     },
@@ -54,6 +56,13 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = FormatArg::Json)]
         format: FormatArg,
     },
+    /// Remove expired Jacu-owned diagnostics. Repository files stay in place.
+    Clean {
+        #[arg(long)]
+        repo: PathBuf,
+    },
+    /// Report the platform and the commands this binary actually provides.
+    Capabilities,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -110,10 +119,13 @@ fn main() -> ExitCode {
             repo,
             session,
             checkpoint,
+            hook,
             format,
         } => {
             if !matches!(format, FormatArg::Json) {
                 invalid_output("verify", "verify only writes json")
+            } else if hook.is_some() {
+                verify_hook(HookRequest { repo, session })
             } else {
                 verify(VerifyRequest {
                     repo,
@@ -137,6 +149,8 @@ fn main() -> ExitCode {
                 FormatArg::Markdown => ReportFormat::Markdown,
             },
         }),
+        Commands::Clean { repo } => clean(repo),
+        Commands::Capabilities => capabilities(),
     };
     println!("{}", output.body);
     ExitCode::from(output.exit_code as u8)

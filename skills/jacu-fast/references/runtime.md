@@ -1,6 +1,6 @@
 # Jacu Fast Runtime Reference
 
-Version 0.1.0 ships `bin/jacu` for macOS Apple Silicon. The commands below are the contract for that binary. Release packaging must keep this reference aligned with the actual CLI. Linux and Windows builds are not in this package.
+Version 0.2.0 ships `bin/jacu` for macOS Apple Silicon. The commands below are the contract for that binary. Release packaging must keep this reference aligned with the actual CLI. The same source is tested on Linux by CI. This package does not contain a Linux or Windows executable.
 
 ## Command lifecycle
 

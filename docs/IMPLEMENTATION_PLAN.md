@@ -1,10 +1,10 @@
 # Jacu Fast — Final Implementation Plan
 
 **Plan version:** 1.0 · **Date:** September 24, 2026  
-**Status:** agreed product direction and executor-ready specification; not an implemented release  
+**Status:** 0.2.0 implements this plan's release behavior. `cargo test` is the evidence. The prebuilt executable in the repository is macOS Apple Silicon.  
 **Repository:** https://github.com/jacu-dev/jacu-fast · **Visibility:** public · **License:** MIT  
 
-The public repository exists. This document remains the specification. The first published commit contains the skill, this plan, and the acceptance checklist. It does not contain the Rust `jacu` binary. The local executor handoff is not part of this repository.
+The public repository contains the skill, this plan, the acceptance checklist, and the Rust `jacu` executable for macOS Apple Silicon. The local executor handoff is not part of this repository.
 
 **Product version to implement first:** `0.1.0`  
 **Source, documentation, comments, schemas, examples, issues and CLI output:** English  

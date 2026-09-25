@@ -44,8 +44,8 @@ def main() -> None:
         claude_manifest.get("version"),
         marketplace["plugins"][0].get("version"),
     }
-    if versions != {"0.1.0"}:
-        fail(f"expected version 0.1.0 in all three manifests, found {versions}")
+    if versions != {"0.2.0"}:
+        fail(f"expected version 0.2.0 in all three manifests, found {versions}")
     if marketplace["plugins"][0]["source"] != "./":
         fail("marketplace plugin source must stay ./ for this git repository")
     if marketplace["plugins"][0]["name"] != "jacu-fast":
@@ -64,8 +64,8 @@ def main() -> None:
     if "contains no Jacu executable" in skill:
         fail("skill still describes a skill-only release")
     runtime = (ROOT / "skills" / "jacu-fast" / "references" / "runtime.md").read_text(encoding="utf-8")
-    if "Version 0.1.0 ships `bin/jacu`" not in runtime:
-        fail("runtime reference must name the 0.1.0 executable")
+    if "Version 0.2.0 ships `bin/jacu`" not in runtime:
+        fail("runtime reference must name the 0.2.0 executable")
     binary = ROOT / "bin" / "jacu"
     if not binary.is_file():
         fail("bin/jacu is missing")
@@ -74,7 +74,7 @@ def main() -> None:
     magic = binary.read_bytes()[:4]
     if magic not in (b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"):
         fail("bin/jacu is not a macOS executable")
-    print("PASS: manifests, skill frontmatter, version 0.1.0, and bin/jacu")
+    print("PASS: manifests, skill frontmatter, version 0.2.0, and bin/jacu")
 
 
 if __name__ == "__main__":

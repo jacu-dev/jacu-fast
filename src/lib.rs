@@ -66,6 +66,8 @@ struct Session {
     candidate_hash: String,
     head: Option<String>,
     dirty: bool,
+    #[serde(default)]
+    bound_minimums: BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +77,8 @@ struct Contract {
     effort: EffortSpec,
     #[serde(default)]
     amendments: Vec<Amendment>,
+    #[serde(default)]
+    context: Vec<ContextRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,8 +106,16 @@ struct Amendment {
     id: String,
     #[serde(default)]
     removes: Vec<String>,
+    #[serde(default)]
+    weakens: Vec<String>,
     reason: String,
     source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ContextRef {
+    id: String,
+    path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +134,12 @@ struct Receipt {
     stderr_excerpt: String,
     truncated: bool,
     detail: String,
+    #[serde(default)]
+    external: bool,
+    #[serde(default)]
+    env_sha256: String,
+    #[serde(default)]
+    kind: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,7 +156,6 @@ struct PolicyFile {
 struct CheckSpec {
     id: String,
     #[serde(default = "external_kind")]
-    #[allow(dead_code)]
     kind: String,
     program: String,
     #[serde(default)]
@@ -150,6 +167,10 @@ struct CheckSpec {
     minimum_tests: u32,
     #[serde(default = "default_reuse")]
     reuse: String,
+    #[serde(default)]
+    external_state: bool,
+    #[serde(default)]
+    environment: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -176,6 +197,8 @@ struct InventoryView {
     dirty: bool,
     worktrees: Vec<String>,
     notes: Vec<String>,
+    disk_logical_bytes: u64,
+    disk_allocated_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,6 +206,7 @@ struct EvidenceView {
     id: String,
     state: String,
     detail: String,
+    excerpt: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -202,6 +226,7 @@ struct Envelope {
     binary_version: &'static str,
     command: &'static str,
     session_id: Option<String>,
+    request_sha256: String,
     outcome: String,
     terminal: bool,
     exit_code: i32,
@@ -214,6 +239,24 @@ struct Envelope {
     effort: Option<EffortView>,
     inventory: Option<InventoryView>,
     checks: Vec<EvidenceView>,
+    outcomes: Vec<OutcomeView>,
+    usage: UsageView,
+    counts_in_denominator: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OutcomeView {
+    id: String,
+    implementation: String,
+    delivery: String,
+    evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UsageView {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cost: Option<f64>,
 }
 
 struct RepoFacts {
@@ -225,6 +268,8 @@ struct RepoFacts {
     worktrees: Vec<String>,
     notes: Vec<String>,
     candidate_hash: String,
+    disk_logical_bytes: u64,
+    disk_allocated_bytes: u64,
 }
 
 struct PolicyState {
@@ -262,6 +307,7 @@ pub fn invalid_output(command: &'static str, message: &str) -> Output {
         binary_version: VERSION,
         command,
         session_id: None,
+        request_sha256: String::new(),
         outcome: "unavailable".into(),
         terminal: true,
         exit_code: 4,
@@ -274,6 +320,9 @@ pub fn invalid_output(command: &'static str, message: &str) -> Output {
         effort: None,
         inventory: None,
         checks: Vec::new(),
+        outcomes: Vec::new(),
+        usage: UsageView::unknown(),
+        counts_in_denominator: false,
     };
     Output {
         exit_code: 4,
@@ -337,6 +386,7 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
         candidate_hash: facts.candidate_hash.clone(),
         head: facts.head.clone(),
         dirty: facts.dirty,
+        bound_minimums: BTreeMap::new(),
     });
     if session.schema_version != SCHEMA_VERSION {
         return Err("session schema is not compatible with this binary".into());
@@ -363,10 +413,16 @@ fn prepare_inner(request: PrepareRequest, started: Instant) -> Result<Output, St
                 ));
             }
         }
-        validate_contract(&next, &policy)?;
+        validate_contract(&next, &policy, &facts.canonical)?;
+        let minimums = minimum_map(&policy, &next);
+        if let Some(problem) = weaken_conflict(&session.bound_minimums, &minimums, &next) {
+            return Err(problem);
+        }
+        session.bound_minimums = minimums;
         session.contract = Some(next);
     }
     save_session(&session)?;
+    write_diagnostic(&session)?;
     let (outcome, terminal, pending, next_actions) = if request.audit {
         let mut pending = contract_gaps(session.contract.as_ref());
         if policy.checks.is_empty() {
@@ -417,6 +473,12 @@ fn verify_inner(request: VerifyRequest, started: Instant) -> Result<Output, Stri
     if session.schema_version != SCHEMA_VERSION {
         return Err("session schema is not compatible with this binary".into());
     }
+    if session.binary_version != VERSION {
+        return Err(format!(
+            "session is pinned to jacu {}; this binary is {VERSION}",
+            session.binary_version
+        ));
+    }
     if session.repo != facts.canonical.to_string_lossy() {
         return Err("session belongs to a different repository".into());
     }
@@ -460,7 +522,13 @@ fn verify_inner(request: VerifyRequest, started: Instant) -> Result<Output, Stri
             }
             continue;
         }
-        let receipt = execute_check(&facts.canonical, spec, &facts.candidate_hash, &policy.raw_sha256)?;
+        let receipt = execute_check(
+            &facts.canonical,
+            spec,
+            &facts.candidate_hash,
+            &policy.raw_sha256,
+            &session.request_sha256,
+        )?;
         ran_failure = ran_failure || receipt.state == "failed";
         saw_unknown = saw_unknown || receipt.state == "unknown";
         session.receipts.push(receipt);
@@ -492,6 +560,12 @@ fn report_inner(request: ReportRequest, started: Instant) -> Result<Output, Stri
     let _lock = lock_session(&facts_key(&facts), &request.session)?;
     let mut session = load_session(&facts, &request.session)?
         .ok_or_else(|| format!("unknown session {}", request.session))?;
+    if session.binary_version != VERSION {
+        return Err(format!(
+            "session is pinned to jacu {}; this binary is {VERSION}",
+            session.binary_version
+        ));
+    }
     if session.repo != facts.canonical.to_string_lossy() {
         return Err("session belongs to a different repository".into());
     }
@@ -570,6 +644,16 @@ fn judge(
             _ => missing.push(id.clone()),
         }
     }
+    let weakened = weakened_pending(session, policy);
+    if checkpoint == Checkpoint::Delivery && !weakened.is_empty() {
+        return (
+            "incomplete".into(),
+            true,
+            3,
+            weakened,
+            vec!["Restore the bound assertion or record an amendment that names the weakened check.".into()],
+        );
+    }
     if checkpoint == Checkpoint::Iteration {
         let mut pending = gaps;
         pending.extend(missing.iter().map(|id| format!("check {id} has not run")));
@@ -613,15 +697,22 @@ fn judge(
         );
     }
     if !unknown.is_empty() || saw_unknown || !missing.is_empty() || !gaps.is_empty() {
+        let no_gaps = gaps.is_empty();
         let mut pending = gaps;
         pending.extend(missing.iter().map(|id| format!("check {id} has not run")));
         pending.extend(unknown.iter().map(|id| format!("check {id} is unknown")));
+        let external = unknown.iter().any(|id| receipt_is_external(session, policy, facts, id));
+        let terminal = external && missing.is_empty() && no_gaps;
         return (
             "incomplete".into(),
-            false,
+            terminal,
             3,
             pending,
-            vec!["Delivery still has outstanding outcomes or evidence.".into()],
+            vec![if external {
+                "An external blocker stopped the check. The repository was not modified.".into()
+            } else {
+                "Delivery still has outstanding outcomes or evidence.".into()
+            }],
         );
     }
     (
@@ -677,6 +768,7 @@ fn matching_receipt<'a>(
             && receipt.cwd == spec.cwd
             && receipt.candidate_hash == candidate_hash
             && receipt.policy_sha256 == policy_sha256
+            && (receipt.env_sha256.is_empty() || receipt.env_sha256 == env_fingerprint(&spec.environment))
             && matches!(receipt.state.as_str(), "passed" | "reused" | "failed" | "unknown")
     })
 }
@@ -684,7 +776,7 @@ fn matching_receipt<'a>(
 fn needs_run(spec: &CheckSpec, state: Option<&str>) -> bool {
     match state {
         None => true,
-        Some("passed") if spec.reuse == "never" => true,
+        Some("passed") if spec.reuse == "never" || spec.external_state => true,
         Some(_) => false,
     }
 }
@@ -703,6 +795,7 @@ fn execute_check(
     spec: &CheckSpec,
     candidate_hash: &str,
     policy_sha256: &str,
+    request_sha256: &str,
 ) -> Result<Receipt, String> {
     let cwd = resolve_cwd(repo, &spec.cwd)?;
     let program = resolve_program(&cwd, &spec.program)?;
@@ -713,9 +806,8 @@ fn execute_check(
         .current_dir(&cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never");
+        .stderr(Stdio::piped());
+    apply_noninteractive(&mut command);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -724,6 +816,10 @@ fn execute_check(
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
+            let external = matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+            );
             return Ok(finished_receipt(
                 spec,
                 "unknown",
@@ -734,6 +830,7 @@ fn execute_check(
                 Vec::new(),
                 format!("cannot start check: {error}").into_bytes(),
                 false,
+                external,
                 format!("cannot start check: {error}"),
             ));
         }
@@ -767,6 +864,7 @@ fn execute_check(
                     stdout.0,
                     stderr.0,
                     true,
+                    false,
                     format!("check wait failed: {error}"),
                 ));
             }
@@ -787,6 +885,7 @@ fn execute_check(
             stdout,
             stderr,
             true,
+            false,
             "check timed out".to_string(),
         ));
     }
@@ -796,7 +895,16 @@ fn execute_check(
         all.extend_from_slice(&stderr);
         String::from_utf8_lossy(&all).into_owned()
     };
-    let (state, detail) = classify_check(spec, code, &combined, truncated);
+    let (mut state, mut detail) = classify_check(spec, code, &combined, truncated, request_sha256);
+    if state == "passed" {
+        if let Ok(after) = inspect_repo(repo) {
+            if after.candidate_hash != candidate_hash {
+                state = "unknown";
+                detail = "candidate changed during the check".into();
+            }
+        }
+    }
+    let external = matches!(code, Some(126) | Some(127));
     Ok(finished_receipt(
         spec,
         state,
@@ -807,11 +915,18 @@ fn execute_check(
         stdout,
         stderr,
         truncated,
+        external,
         detail,
     ))
 }
 
-fn classify_check(spec: &CheckSpec, code: Option<i32>, output: &str, truncated: bool) -> (&'static str, String) {
+fn classify_check(
+    spec: &CheckSpec,
+    code: Option<i32>,
+    output: &str,
+    truncated: bool,
+    request_sha256: &str,
+) -> (&'static str, String) {
     if truncated {
         return ("unknown", "check output was truncated".into());
     }
@@ -836,7 +951,29 @@ fn classify_check(spec: &CheckSpec, code: Option<i32>, output: &str, truncated: 
             None => return ("failed", "minimum test count was not present in the output".into()),
         }
     }
+    if spec.kind == "semantic" {
+        return classify_semantic(output, request_sha256, &spec.id);
+    }
     ("passed", "check passed".into())
+}
+
+fn classify_semantic(output: &str, request_sha256: &str, check_id: &str) -> (&'static str, String) {
+    let value: Value = match serde_json::from_str(output.trim()) {
+        Ok(value) => value,
+        Err(_) => return ("failed", "semantic answer is not JSON".into()),
+    };
+    if value.get("request_sha256").and_then(Value::as_str) != Some(request_sha256) {
+        return ("failed", "semantic answer is not bound to this request".into());
+    }
+    if value.get("evidence_id").and_then(Value::as_str) != Some(check_id) {
+        return ("failed", "semantic answer is not bound to this check".into());
+    }
+    match value.get("score").and_then(Value::as_f64) {
+        Some(score) if score.is_finite() && (0.0..=1.0).contains(&score) => {
+            ("passed", "semantic answer is well formed and does not waive other checks".into())
+        }
+        _ => ("failed", "semantic score is missing or not finite".into()),
+    }
 }
 
 fn passed_count(output: &str) -> Option<u32> {
@@ -870,6 +1007,7 @@ fn finished_receipt(
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     truncated: bool,
+    external: bool,
     detail: String,
 ) -> Receipt {
     Receipt {
@@ -887,6 +1025,9 @@ fn finished_receipt(
         stderr_excerpt: excerpt(&stderr),
         truncated,
         detail,
+        external,
+        env_sha256: env_fingerprint(&spec.environment),
+        kind: spec.kind.clone(),
     }
 }
 
@@ -911,18 +1052,26 @@ fn finish(
 ) -> Output {
     let mut timings = BTreeMap::new();
     timings.insert("total".to_string(), started.elapsed().as_millis());
+    if let Some(receipt) = session.receipts.iter().rev().find(|receipt| receipt.kind.starts_with("cargo")) {
+        timings.insert("next_build".to_string(), receipt.duration_ms);
+    }
     let checks: Vec<EvidenceView> = policy
         .checks
         .iter()
         .map(|spec| {
             let state = evidence_state(session, policy, facts, &spec.id);
-            let detail = matching_receipt(session, spec, &facts.candidate_hash, &policy.raw_sha256)
+            let matched = matching_receipt(session, spec, &facts.candidate_hash, &policy.raw_sha256);
+            let detail = matched
                 .map(|receipt| receipt.detail.clone())
                 .unwrap_or_else(|| "not run for this candidate".into());
+            let excerpt = matched
+                .map(|receipt| receipt.stdout_excerpt.clone())
+                .unwrap_or_default();
             EvidenceView {
                 id: spec.id.clone(),
                 state: if state == "missing" { "deferred".into() } else { state.into() },
                 detail,
+                excerpt,
             }
         })
         .collect();
@@ -936,6 +1085,7 @@ fn finish(
         binary_version: VERSION,
         command,
         session_id: Some(session.session_id.clone()),
+        request_sha256: session.request_sha256.clone(),
         outcome: outcome.to_string(),
         terminal,
         exit_code,
@@ -954,6 +1104,24 @@ fn finish(
         effort: session.contract.as_ref().map(|contract| effort_view(&contract.effort)),
         inventory: Some(inventory_view(facts)),
         checks,
+        outcomes: session
+            .contract
+            .as_ref()
+            .map(|contract| {
+                contract
+                    .outcomes
+                    .iter()
+                    .map(|outcome| OutcomeView {
+                        id: outcome.id.clone(),
+                        implementation: outcome.implementation.clone(),
+                        delivery: outcome.delivery.clone(),
+                        evidence: outcome.evidence.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        usage: UsageView::unknown(),
+        counts_in_denominator: true,
     };
     Output {
         exit_code,
@@ -994,6 +1162,8 @@ fn inventory_view(facts: &RepoFacts) -> InventoryView {
         dirty: facts.dirty,
         worktrees: facts.worktrees.clone(),
         notes: facts.notes.clone(),
+        disk_logical_bytes: facts.disk_logical_bytes,
+        disk_allocated_bytes: facts.disk_allocated_bytes,
     }
 }
 
@@ -1124,7 +1294,8 @@ fn read_contract(path: &Path) -> Result<Contract, String> {
     Ok(contract)
 }
 
-fn validate_contract(contract: &Contract, policy: &PolicyState) -> Result<(), String> {
+fn validate_contract(contract: &Contract, policy: &PolicyState, repo: &Path) -> Result<(), String> {
+    validate_context(contract, repo)?;
     for outcome in &contract.outcomes {
         for evidence in &outcome.evidence {
             if !policy.checks.iter().any(|check| &check.id == evidence) {
@@ -1278,6 +1449,21 @@ fn inspect_repo(requested: &Path) -> Result<RepoFacts, String> {
     if git && head.is_none() {
         notes.push("git HEAD is not available".into());
     }
+    for worktree in &worktrees {
+        if !Path::new(worktree).exists() {
+            notes.push(format!("worktree is missing: {worktree}"));
+        }
+    }
+    if git {
+        let has_remote = git_bytes(&root, &["remote"])
+            .ok()
+            .map(|bytes| !bytes.iter().all(u8::is_ascii_whitespace))
+            .unwrap_or(false);
+        if has_remote && git_bytes(&root, &["rev-parse", "--abbrev-ref", "@{upstream}"]).is_err() {
+            notes.push("upstream ref is not available and is not assumed safe".into());
+        }
+    }
+    let (disk_logical_bytes, disk_allocated_bytes) = measure_disk(&root);
     let mut identity = Vec::new();
     identity.extend_from_slice(head.as_deref().unwrap_or("").as_bytes());
     identity.push(0);
@@ -1291,6 +1477,8 @@ fn inspect_repo(requested: &Path) -> Result<RepoFacts, String> {
         dirty,
         worktrees,
         notes,
+        disk_logical_bytes,
+        disk_allocated_bytes,
     })
 }
 
@@ -1309,10 +1497,8 @@ fn git_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never")
-        .env("GIT_PAGER", "cat");
+        .stderr(Stdio::piped());
+    apply_noninteractive(&mut command);
     let child = command.spawn().map_err(|error| format!("cannot run git: {error}"))?;
     let output = child.wait_with_output().map_err(|error| format!("git failed: {error}"))?;
     if !output.status.success() {
@@ -1513,6 +1699,377 @@ fn force_kill(child: &mut Child) {
         libc::kill(-(child.id() as i32), libc::SIGKILL);
     }
     let _ = child.kill();
+}
+
+impl UsageView {
+    fn unknown() -> Self {
+        Self {
+            input_tokens: None,
+            output_tokens: None,
+            cost: None,
+        }
+    }
+}
+
+fn apply_noninteractive(command: &mut Command) {
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .env("GIT_PAGER", "cat")
+        .env("PAGER", "cat")
+        .env("GIT_EDITOR", "true")
+        .env("EDITOR", "true")
+        .env("VISUAL", "true");
+}
+
+fn env_fingerprint(keys: &[String]) -> String {
+    if keys.is_empty() {
+        return "none".into();
+    }
+    let mut lines = Vec::new();
+    for key in keys {
+        if !key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+            continue;
+        }
+        let value = std::env::var(key).unwrap_or_default();
+        lines.push(format!("{key}={}", sha256_hex(value.as_bytes())));
+    }
+    sha256_hex(lines.join("\n").as_bytes())
+}
+
+fn minimum_map(policy: &PolicyState, contract: &Contract) -> BTreeMap<String, u32> {
+    obligation_ids(policy, Some(contract))
+        .into_iter()
+        .map(|id| {
+            let minimum = policy
+                .checks
+                .iter()
+                .find(|check| check.id == id)
+                .map(|check| check.minimum_tests)
+                .unwrap_or(0);
+            (id, minimum)
+        })
+        .collect()
+}
+
+fn weaken_conflict(
+    bound: &BTreeMap<String, u32>,
+    next: &BTreeMap<String, u32>,
+    contract: &Contract,
+) -> Option<String> {
+    let allowed: BTreeSet<&str> = contract
+        .amendments
+        .iter()
+        .flat_map(|amendment| amendment.weakens.iter().map(String::as_str))
+        .collect();
+    for (id, previous) in bound {
+        match next.get(id) {
+            None if !allowed.contains(id.as_str()) => {
+                return Some(format!("check {id} was removed without an amendment"));
+            }
+            Some(current) if current < previous && !allowed.contains(id.as_str()) => {
+                return Some(format!("check {id} assertion was weakened without an amendment"));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn weakened_pending(session: &Session, policy: &PolicyState) -> Vec<String> {
+    let Some(contract) = session.contract.as_ref() else {
+        return Vec::new();
+    };
+    let allowed: BTreeSet<&str> = contract
+        .amendments
+        .iter()
+        .flat_map(|amendment| amendment.weakens.iter().map(String::as_str))
+        .collect();
+    let mut pending = Vec::new();
+    for (id, bound) in &session.bound_minimums {
+        match policy.checks.iter().find(|check| &check.id == id) {
+            None if !allowed.contains(id.as_str()) => {
+                pending.push(format!("check {id} was removed without an amendment"));
+            }
+            Some(check) if check.minimum_tests < *bound && !allowed.contains(id.as_str()) => {
+                pending.push(format!("check {id} assertion was weakened without an amendment"));
+            }
+            _ => {}
+        }
+    }
+    pending
+}
+
+fn validate_context(contract: &Contract, repo: &Path) -> Result<(), String> {
+    for item in &contract.context {
+        let opaque = item.id.starts_with('f')
+            && item.id.len() > 1
+            && item.id[1..].chars().all(|ch| ch.is_ascii_digit());
+        let shaped = item.id.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic())
+            && item
+                .id
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':' | '-'));
+        if opaque || !shaped {
+            return Err(format!("context id {} is stale or ambiguous", item.id));
+        }
+        if item.path.starts_with('/') || item.path.split(['/', '\\']).any(|part| part == "..") {
+            return Err(format!("context path {} escapes the repository", item.path));
+        }
+        if !repo.join(&item.path).is_file() {
+            return Err(format!("context path {} is not in the current tree", item.path));
+        }
+    }
+    Ok(())
+}
+
+fn receipt_is_external(session: &Session, policy: &PolicyState, facts: &RepoFacts, id: &str) -> bool {
+    let Some(spec) = policy.checks.iter().find(|check| &check.id == id) else {
+        return false;
+    };
+    matching_receipt(session, spec, &facts.candidate_hash, &policy.raw_sha256)
+        .map(|receipt| receipt.external)
+        .unwrap_or(false)
+}
+
+fn measure_disk(root: &Path) -> (u64, u64) {
+    let mut logical = 0_u64;
+    let mut allocated = 0_u64;
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            if entry.file_name() == ".git" {
+                continue;
+            }
+            let path = entry.path();
+            let meta = match fs::symlink_metadata(&path) {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            };
+            if meta.file_type().is_symlink() {
+                logical += meta.len();
+                continue;
+            }
+            if meta.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if !seen.insert((meta.dev(), meta.ino())) {
+                    continue;
+                }
+                logical += meta.len();
+                allocated += meta.blocks() * 512;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = &seen;
+                logical += meta.len();
+                allocated += meta.len();
+            }
+        }
+    }
+    (logical, allocated)
+}
+
+fn write_diagnostic(session: &Session) -> Result<(), String> {
+    let dir = data_root()?.join("diagnostics").join(&session.repo_key);
+    fs::create_dir_all(&dir).map_err(|error| format!("cannot create diagnostics: {error}"))?;
+    let path = dir.join(format!("{}.json", session.session_id));
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "session_id": session.session_id,
+        "candidate_hash": session.candidate_hash,
+    }))
+    .map_err(|error| error.to_string())?;
+    fs::write(&path, &bytes).map_err(|error| format!("cannot write diagnostic: {error}"))?;
+    fs::write(
+        dir.join(format!("{}.owned", session.session_id)),
+        sha256_hex(&bytes),
+    )
+    .map_err(|error| format!("cannot write diagnostic owner record: {error}"))?;
+    Ok(())
+}
+
+pub fn capabilities() -> Output {
+    let body = serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "binary_version": VERSION,
+        "command": "capabilities",
+        "outcome": "ready",
+        "exit_code": 0,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "effort_application": "advisory_only",
+        "compiles_on_missing_binary": false,
+        "commands": ["prepare", "verify", "report", "clean", "capabilities"],
+        "usage": {"input_tokens": null, "output_tokens": null, "cost": null}
+    });
+    Output {
+        exit_code: 0,
+        body: body.to_string(),
+    }
+}
+
+pub struct HookRequest {
+    pub repo: PathBuf,
+    pub session: String,
+}
+
+pub fn verify_hook(request: HookRequest) -> Output {
+    if std::env::var("JACU_HOOK").ok().as_deref() == Some("1") {
+        let body = serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "binary_version": VERSION,
+            "command": "verify",
+            "session_id": request.session,
+            "outcome": "incomplete",
+            "terminal": true,
+            "exit_code": 0,
+            "pending": ["hook recursion stopped"],
+            "next_actions": [],
+            "usage": {"input_tokens": null, "output_tokens": null, "cost": null},
+            "counts_in_denominator": true
+        });
+        return Output {
+            exit_code: 0,
+            body: body.to_string(),
+        };
+    }
+    let started = Instant::now();
+    match verify_hook_inner(request, started) {
+        Ok(output) => output,
+        Err(message) => invalid_output("verify", &message),
+    }
+}
+
+fn verify_hook_inner(request: HookRequest, started: Instant) -> Result<Output, String> {
+    validate_session_id(&request.session)?;
+    let facts = inspect_repo(&request.repo)?;
+    let _lock = lock_session(&facts_key(&facts), &request.session)?;
+    let session = load_session(&facts, &request.session)?
+        .ok_or_else(|| format!("unknown session {}", request.session))?;
+    if session.binary_version != VERSION {
+        return Err(format!(
+            "session is pinned to jacu {}; this binary is {VERSION}",
+            session.binary_version
+        ));
+    }
+    let policy = load_policy(&facts.canonical)?;
+    let (outcome, terminal, exit_code, pending, next_actions) = if session.audit {
+        (
+            "assessment_complete".to_string(),
+            true,
+            0,
+            Vec::new(),
+            vec!["Hook evaluation did not run project commands.".into()],
+        )
+    } else {
+        judge(&session, &policy, &facts, Checkpoint::Delivery, false, false)
+    };
+    Ok(finish(
+        "verify",
+        &session,
+        &facts,
+        &policy,
+        &outcome,
+        terminal,
+        exit_code,
+        pending,
+        next_actions,
+        None,
+        started,
+    ))
+}
+
+pub fn clean(repo: PathBuf) -> Output {
+    let started = Instant::now();
+    match clean_inner(&repo, started) {
+        Ok(output) => output,
+        Err(message) => invalid_output("clean", &message),
+    }
+}
+
+fn clean_inner(repo: &Path, started: Instant) -> Result<Output, String> {
+    let facts = inspect_repo(repo)?;
+    let ttl = std::env::var("JACU_DIAGNOSTIC_TTL_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(7 * 24 * 60 * 60);
+    let root = data_root()?.join("diagnostics");
+    let mut removed_bytes = 0_u64;
+    let mut removed = Vec::new();
+    if root.is_dir() {
+        let mut dirs = vec![root];
+        while let Some(dir) = dirs.pop() {
+            let entries = fs::read_dir(&dir).map_err(|error| format!("cannot read diagnostics: {error}"))?;
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with("active-") || !name.ends_with(".json") {
+                    continue;
+                }
+                let owned = path.with_file_name(format!(
+                    "{}.owned",
+                    name.trim_end_matches(".json")
+                ));
+                let Ok(body) = fs::read(&path) else { continue };
+                let Ok(expected) = fs::read_to_string(&owned) else { continue };
+                if expected.trim() != sha256_hex(&body) {
+                    continue;
+                }
+                let modified = fs::metadata(&path).and_then(|meta| meta.modified()).ok();
+                let old_enough = modified
+                    .and_then(|time| time.elapsed().ok())
+                    .map(|age| age.as_secs() >= ttl)
+                    .unwrap_or(false);
+                if !old_enough {
+                    continue;
+                }
+                removed_bytes += body.len() as u64;
+                let _ = fs::remove_file(&path);
+                let _ = fs::remove_file(&owned);
+                removed.push(name.to_string());
+            }
+        }
+    }
+    let mut timings = BTreeMap::new();
+    timings.insert("total".to_string(), started.elapsed().as_millis());
+    let body = serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "binary_version": VERSION,
+        "command": "clean",
+        "outcome": "complete",
+        "terminal": true,
+        "exit_code": 0,
+        "candidate": {
+            "repo": facts.canonical,
+            "hash": facts.candidate_hash,
+            "dirty": facts.dirty
+        },
+        "removed": removed,
+        "reclaimed_bytes": removed_bytes,
+        "pending": [],
+        "next_actions": [],
+        "timings_ms": timings,
+        "usage": {"input_tokens": null, "output_tokens": null, "cost": null},
+        "counts_in_denominator": true
+    });
+    Ok(Output {
+        exit_code: 0,
+        body: body.to_string(),
+    })
 }
 
 fn empty_candidate() -> CandidateView {
