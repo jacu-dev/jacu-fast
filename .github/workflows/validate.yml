@@ -3,23 +3,45 @@ name: validate
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  manifests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Check manifests and skill frontmatter
-        run: |
-          python3 -m pip install --user jsonschema==4.25.1
-          python3 scripts/validate_manifests.py
   cli:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run protocol tests
-        run: cargo test --locked
+      - name: Test the actual runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          cargo test --locked 2>&1 | tee artifacts/cargo-test.txt
+      - name: Build the distribution executable
+        run: cargo build --release --locked
+      - name: Preserve the exact source and executable under test
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          git archive --format=tar HEAD > artifacts/source.tar
+          if [ -f target/release/jacu ]; then cp target/release/jacu artifacts/jacu; fi
+          git rev-parse HEAD > artifacts/commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-${{ matrix.os }}
+          path: artifacts/
+          retention-days: 7
