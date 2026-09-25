@@ -28,5 +28,10 @@
     "path": ".github/workflows/validate.yml",
     "old": "          retention-days: 14",
     "new": "          retention-days: 7"
+  },
+  {
+    "path": "tests/test_regressions.py",
+    "old": "        self.checks[0]['program'] = '/bin/true'",
+    "new": "        self.checks[0]['program'] = shutil.which('true')\n        self.assertIsNotNone(self.checks[0]['program'], 'the fixture needs a real true executable')"
   }
 ]
