@@ -1,0 +1,119 @@
+name: repair-and-package
+
+on:
+  push:
+    branches: [fix/reliable-plugin-workflow]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Apply checksummed source changes
+        run: python3 .github/repair-apply.py
+      - name: Install the pinned compiler and format the source
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          cargo fmt --all
+          python3 scripts/validate_manifests.py
+      - name: Exercise actual runtime and adversarial regressions
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          cargo test --locked 2>&1 | tee artifacts/cargo-test.txt
+          cargo build --release --locked
+          JACU_TEST_BIN="$PWD/target/release/jacu" python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee artifacts/python-test.txt
+      - name: Fingerprint and exercise the packaged runtime
+        shell: bash
+        run: |
+          python3 scripts/build_metadata.py
+          python3 scripts/package_runtime.py --artifacts artifacts
+          python3 scripts/host.py doctor > artifacts/doctor.json
+          python3 -c 'import json; assert json.load(open("artifacts/doctor.json"))["mode"] == "runtime"'
+          bin/jacu capabilities
+      - name: Exercise a real clean Claude plugin installation
+        shell: bash
+        run: |
+          npm install --global --no-audit --no-fund @anthropic-ai/claude-code@2.1.282
+          set -o pipefail
+          python3 scripts/test_claude_install.py 2>&1 | tee artifacts/claude-install.txt
+      - name: Preserve the exact tested tree without bootstrap files
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          rm -rf .github/repair-payload
+          rm -f .github/repair-apply.py .github/repair-fixes.json .github/workflows/repair.yml .github/workflows/runtime-probe.yml
+          git add -A
+          git archive --format=tar "$(git write-tree)" > artifacts/source.tar
+          git rev-parse HEAD > artifacts/commit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: repair-${{ matrix.os }}
+          path: artifacts/
+          retention-days: 14
+  publish:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: repair-*
+          path: ${{ runner.temp }}/jacu-builds
+      - name: Assemble both tested targets and fast-forward only this repair branch
+        shell: bash
+        env:
+          BUILDS: ${{ runner.temp }}/jacu-builds
+          EXPECTED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 - <<'PY'
+          import json, os, tarfile
+          from pathlib import Path
+          builds = Path(os.environ['BUILDS'])
+          records = [json.loads(p.read_text()) for p in builds.rglob('build.json')]
+          assert {x['target'] for x in records} == {'aarch64-apple-darwin', 'x86_64-unknown-linux-gnu'}
+          assert len(records) == 2
+          assert len({x['source_sha256'] for x in records}) == 1
+          assert all(x['binary_version'] == '0.3.0' and x['ci_commit'] == os.environ['EXPECTED_HEAD'] for x in records)
+          with tarfile.open(builds / 'repair-ubuntu-24.04/source.tar') as archive:
+              for member in archive.getmembers():
+                  name = Path(member.name)
+                  assert not name.is_absolute() and '..' not in name.parts and '.git' not in name.parts
+                  assert member.isfile() or member.isdir()
+          PY
+          git rm -r --quiet --ignore-unmatch .
+          tar -xf "$BUILDS/repair-ubuntu-24.04/source.tar"
+          python3 scripts/package_runtime.py --artifacts "$BUILDS"
+          python3 scripts/host.py doctor
+          bin/jacu capabilities
+          test ! -e .github/repair-payload
+          test ! -e .github/workflows/repair.yml
+          git add -A
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: ship reliable 0.3.0 workflow, evidence checks and tested runtimes'
+          git push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
