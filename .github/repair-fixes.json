@@ -33,5 +33,15 @@
     "path": "tests/test_regressions.py",
     "old": "        self.checks[0]['program'] = '/bin/true'",
     "new": "        self.checks[0]['program'] = shutil.which('true')\n        self.assertIsNotNone(self.checks[0]['program'], 'the fixture needs a real true executable')"
+  },
+  {
+    "path": "src/runner.rs",
+    "old": "pub(crate) fn capture(mut command:Command,timeout:Duration,cap:usize)->Result<Captured,String>{\n    command.stdin",
+    "new": "pub(crate) fn capture(mut command:Command,timeout:Duration,cap:usize)->Result<Captured,String>{\n    // Shell launchers repair PWD but direct hook processes do not. Normalize\n    // the actual child environment, not just its fingerprint. The canonical\n    // execution directory is already part of the repository/check identity.\n    let cwd = match command.get_current_dir() {\n        Some(path) => fs::canonicalize(path).map_err(|e| format!(\"cannot resolve command cwd: {e}\"))?,\n        None => std::env::current_dir().and_then(fs::canonicalize).map_err(|e| format!(\"cannot resolve current directory: {e}\"))?,\n    };\n    command.env(\"PWD\", cwd);\n    command.stdin"
+  },
+  {
+    "path": "src/runner.rs",
+    "old": "    effective.remove(std::ffi::OsStr::new(\"_\")); effective.remove(std::ffi::OsStr::new(\"SHLVL\"));",
+    "new": "    effective.remove(std::ffi::OsStr::new(\"_\")); effective.remove(std::ffi::OsStr::new(\"SHLVL\"));\n    // capture replaces PWD with the canonical command cwd on every execution.\n    // Inherited stale PWD is not an input; receipt cwd and repo bind the value.\n    effective.remove(std::ffi::OsStr::new(\"PWD\"));"
   }
 ]
