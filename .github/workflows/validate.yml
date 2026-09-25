@@ -22,15 +22,16 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the pinned compiler
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt
       - name: Test the actual runtime
         shell: bash
         run: |
           set -o pipefail
           mkdir -p artifacts
-          cargo test --locked 2>&1 | tee artifacts/cargo-test.txt
+          cargo +1.98.1 test --locked 2>&1 | tee artifacts/cargo-test.txt
       - name: Build the distribution executable
-        run: cargo build --release --locked
+        run: cargo +1.98.1 build --release --locked
       - name: Preserve the exact source and executable under test
         if: always()
         shell: bash
@@ -39,7 +40,7 @@ jobs:
           git archive --format=tar HEAD > artifacts/source.tar
           if [ -f target/release/jacu ]; then cp target/release/jacu artifacts/jacu; fi
           git rev-parse HEAD > artifacts/commit.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: validation-${{ matrix.os }}
