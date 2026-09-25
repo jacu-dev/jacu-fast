@@ -105,10 +105,7 @@ fn prepare_is_ready_and_audit_runs_no_command() {
     repo(&repo_path);
     let counter = root.join("count");
     let script = root.join("tick");
-    write_exe(
-        &script,
-        "#!/bin/sh\nprintf x >> \"$1\"\nexit 0\n",
-    );
+    write_exe(&script, "#!/bin/sh\nprintf x >> \"$1\"\nexit 0\n");
     let policy = format!(
         r#"{{
   "schema_version": 1,
@@ -492,7 +489,10 @@ fn timeout_is_not_a_pass() {
             "delivery",
         ],
     );
-    assert!(started.elapsed().as_secs() < 4, "timeout did not stop the check");
+    assert!(
+        started.elapsed().as_secs() < 4,
+        "timeout did not stop the check"
+    );
     assert_eq!(code, 3, "{value}");
     assert_ne!(value["checks"][0]["state"], "passed");
 }

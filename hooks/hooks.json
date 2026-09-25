@@ -1,0 +1,11 @@
+{
+  "description": "Task-scoped verification. Inactive Stop hooks do no repository work.",
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/host.py\" start", "timeout": 5}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/host.py\" stop", "timeout": 30}]}
+    ]
+  }
+}

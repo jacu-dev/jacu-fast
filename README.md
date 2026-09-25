@@ -1,103 +1,88 @@
 # Jacu Fast
 
-Jacu Fast is a workflow for coding agents. It shortens the path to a change that is actually finished: the behavior you asked for is present, the checks that matter have run, and the work is in the tree you meant to ship.
+A workflow for coding agents, with an optional local evidence runner. **The skill helps the agent work; the runtime records what actually ran against which files.** Neither is an independent proof that every business requirement was understood.
 
-A faster "done" message is not the goal. A missing requirement, a skipped test, or work left in another worktree still counts as unfinished.
+## Choose a mode
 
-Version 0.2.0 is the installable plugin: the skill, the manifests, and `bin/jacu` for macOS Apple Silicon. `prepare`, `verify`, `report`, `clean`, and `capabilities` are implemented. `cargo test` runs the acceptance cases in `docs/acceptance-cases.json`. The same tests run on Linux in CI. This repository does not contain a Linux or Windows executable.
+| Mode | What you get | What it does not claim |
+| --- | --- | --- |
+| Skill only | A task-scoped procedure: inspect existing work, preserve requirements, implement, test and explain delivery. Works without a Jacu executable. | No Jacu receipts, cache, deterministic completion result or installed hooks. |
+| Full Claude plugin | The same skill, a launcher, prebuilt runtimes, package diagnostics, and task-scoped SessionStart/Stop hooks. | No global permission bypass, daemon, model routing or automatic discovery of arbitrary business behavior. |
 
-## Install
+The 0.3.0 runtime fixes the unsafe 0.2.0 cache identity. **Do not reuse 0.2.0 receipts or the old binary.** Source and binary versions are checked before execution.
 
-These are two different installs. The marketplace plugin is what Claude Code loads, including `bin/jacu` on macOS Apple Silicon. The skills installer only copies the skill file into an agent's skill directory. Copying the skill alone does not install the executable.
-
-### Claude Code
-
-In Desktop, paste the HTTPS repository URL. The `owner/repo` shorthand can select SSH, and a non-interactive Desktop process may stall on that choice.
-
-```text
-https://github.com/jacu-dev/jacu-fast.git
-```
-
-From a terminal where `claude` is already installed:
+## Install in Claude Code
 
 ```text
 claude plugin marketplace add https://github.com/jacu-dev/jacu-fast.git
 claude plugin install jacu-fast@jacu-fast
 ```
 
-Start a new session. The plugin command is `/jacu-fast:jacu-fast` followed by the task. There is no `/jacu-fast:run` command in this release.
+Start a new **local Claude Code session**, including the Code tab in Desktop. The plugin skill is:
 
-### Skills installer
+```text
+/jacu-fast:jacu-fast implement the requested change and verify delivery
+```
 
-`npx --yes` skips npm's own install prompt. `-s jacu-fast` selects this skill. `-a` names the agents that should receive it. `--all` means every skill for every agent the installer supports, not only the agents already present on the machine.
+You may also ask in ordinary language: **“Use Jacu Fast for this task.”** Model invocation is enabled; the SessionStart hook explains the installed skill name. This makes discovery possible, not a guarantee that a probabilistic agent always selects it. The exact slash invocation is the unambiguous entry point.
 
-```bash
+`/jacu-fast` is the standalone skill name, not the namespaced plugin command. There is no separate `/jacu-fast:run` command. Installing this plugin does not install it in unrelated cloud chat sessions.
+
+For updates, refresh the marketplace and plugin, then start a new session:
+
+```text
+claude plugin marketplace update jacu-fast
+claude plugin update jacu-fast@jacu-fast
+claude plugin list
+```
+
+The package-level diagnostic is `python3 PLUGIN_ROOT/scripts/host.py doctor`. Replace `PLUGIN_ROOT` with the installation path reported by Claude. It distinguishes “files present” from “loaded in this host session”; it cannot inspect a Desktop session from a separate process.
+
+## Install only the skill
+
+```sh
 npx --yes skills add jacu-dev/jacu-fast -g -y --skill jacu-fast -a claude-code
 ```
 
-A skill installed this way, and not through the plugin above, is invoked as `/jacu-fast`. Add further agent names to `-a` only when that agent should receive the skill. Node is used only for the copy. Jacu does not run as a Node service. There is no OpenCode npm plugin and no MCP server.
+The standalone invocation is `/jacu-fast`. The copy is useful **without a binary**. The agent must report **skill-only mode**, run the project's existing tools itself, and not invent a runtime completion result. Do not install both forms merely to work around a command-name mismatch.
 
-Update the copied skill:
+Agent Skills-compatible hosts may reuse the procedure. The native event adapter in this repository is for Claude Code. A portable manifest does not mean Codex, OpenCode or another host's event integration was tested. There is no OpenCode npm plugin and no MCP server.
 
-```bash
-npx --yes skills update jacu-fast -g -y
+## What happens during a task
+
+The agent captures the original request and a compact outcome contract, inspects branches and linked worktrees before duplicating work, and uses existing project conventions. With the runtime available, it prepares a session against the actual delivery directory/branch, runs useful checks at iteration checkpoints, and obtains current delivery evidence. A Stop hook is activated **only for that task and host session**.
+
+The hook evaluates saved evidence; it never starts the test suite or a model call. Missing evidence sends a bounded recovery instruction to the same agent. An unchanged repeated stop or real terminal blocker ends with an explicit **incomplete** result instead of an approval prompt or infinite retry. Inactive Stop hooks do no repository work.
+
+The runtime discovers existing Cargo, Go, Swift and common Node scripts when `.jacu-fast.json` is absent. Discovery does not install dependencies or invent missing tests. Unknown test output remains unknown. Use an explicit policy for project-specific runners or ignored fixtures.
+
+## What the runtime verifies
+
+- Content identity includes tracked and untracked file bytes, index state, file modes, symlink inputs, initialized submodules, and explicitly declared ignored inputs. It is not just the commit or Git status.
+- A receipt is bound to the request, candidate, check definition, effective environment and executable/toolchain fingerprint. Failures are not success; a diagnosed transient failure can be retried explicitly.
+- The delivery directory and branch are pinned. Required checks and already-bound outcome statements cannot be silently weakened or waived by a model-written amendment.
+- Recognized zero-test runs, timeouts, truncated output and unsupported test counts do not pass. A semantic score needs its configured threshold and cannot replace behavioral evidence.
+
+**Limits:** the agent still maps the request to outcomes and declares implementation state. Source quotes are checked when supplied, but coverage of an arbitrary natural-language request is not proven. Local receipts are mutable by the same OS user; this is not a tamper-proof attestation or security boundary against that user. Repositories and configured commands must already be trusted for execution. No general dependency-impact analysis, worktree-content search, automatic merge, assertion-semantic analysis or speedup benchmark is claimed.
+
+## Runtime and development
+
+Prebuilt targets: macOS Apple Silicon and Linux x86-64 built on Ubuntu 24.04 (glibc 2.39 or newer). The launcher and hooks require Python 3.9+; the compiled CLI itself has no Python dependency. macOS Intel, Linux ARM and Windows use skill-only mode unless a compatible developer runtime is explicitly supplied. No runtime download or compilation occurs silently during an agent task.
+
+```sh
+bin/jacu capabilities
+cargo test --locked
+cargo build --release --locked
+JACU_TEST_BIN="$PWD/target/release/jacu" python3 -m unittest discover -s tests -p 'test_*.py' -v
+JACU_BIN="$PWD/target/release/jacu" python3 scripts/host.py doctor
 ```
 
-Remove it:
+`JACU_BIN` is an explicit developer override, not a PATH fallback. Packaged builds instead require `runtimes/manifest.json`, a matching source fingerprint, binary version and checksum. Developer overrides are identified as such by the diagnostic; they are not claimed to have packaged-build provenance.
 
-```bash
-npx --yes skills remove jacu-fast -g -y
-```
+See [the runtime contract](skills/jacu-fast/references/runtime.md), [the engineering scope](docs/IMPLEMENTATION_PLAN.md), and [the acceptance evidence map](docs/acceptance-cases.json). CI tests the actual compiled CLI on Linux and macOS, the Python hook protocol, package consistency and an isolated Claude CLI installation. An authenticated end-to-end model session and your specific Desktop installation remain separate checks, not implied by unit-test success.
 
-The installed skill uses the packaged `bin/jacu` when this plugin is what loaded it. A skill copied without that binary must say the executable is unavailable. It must not invent timings or a passing result.
-
-## What the agent does
-
-The skill keeps the current session. It does not start another agent, switch models, or ask you to approve routine steps.
-
-1. Look for an implementation that already exists before writing it again.
-2. Keep a short list of the outcomes in the original request.
-3. Run the next useful check, not the full suite after every edit.
-4. Reuse a passing result only when the inputs that result depends on are unchanged.
-5. Call the work complete only when those outcomes are present, evidenced, and in the delivery tree.
-
-A real blocker ends as incomplete, with the missing piece named. There is no Jacu approval prompt.
-
-The command contract is in [skills/jacu-fast/references/runtime.md](skills/jacu-fast/references/runtime.md). On macOS Apple Silicon, run the packaged binary:
-
-```bash
-bin/jacu --version
-```
-
-## What is in this repository
-
-| Path | Contents |
-| --- | --- |
-| `bin/jacu` | macOS Apple Silicon executable |
-| `skills/jacu-fast/` | The skill the installer copies |
-| `src/` | The Rust source for `jacu` |
-| `docs/IMPLEMENTATION_PLAN.md` | The engineering specification |
-| `docs/acceptance-cases.json` | The checklist the CLI must pass before a release can claim those behaviors |
-| `examples/policy.json` | A synthetic example of a future check policy |
-| `plugin.json` | Portable plugin identity for hosts that read it |
-| `.claude-plugin/marketplace.json` | Claude Code marketplace catalog |
-| `.claude-plugin/plugin.json` | Claude Code plugin manifest for the skill |
-| `LICENSE` | MIT license |
-
-`examples/policy.json` is an illustration. It is not a policy to drop into another repository.
+`prepare`, `verify`, `report`, `clean`, and `capabilities` are the native commands. `clean` only removes owned expired diagnostics for the selected repository; it does not delete branches, worktrees, build caches or receipts. Timing fields are measured operation timings, not claimed token or cost savings.
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Jacu Fast contributors.
-
-You may use, copy, modify, merge, publish, and distribute this project, including in commercial work and inside a larger product. The only condition is that copies and substantial portions keep the copyright notice and this license text. The project is provided without warranty, and the authors are not liable for damages that come from using it.
-
-Those are the MIT terms as published by [Choose a License](https://choosealicense.com/licenses/mit/). GitHub detects the license from a standard `LICENSE` file in the repository root ([licensing a repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)). A public repository without that file is visible and forkable, and it does not grant others the right to reuse the code.
-
-Third-party code added later keeps its own notices.
-
-## Contributing
-
-Issues and pull requests are welcome. Write public text in English. Keep examples synthetic. Do not put secrets, customer data, or material from a private repository into an issue or a commit.
-
-The behaviors in `docs/acceptance-cases.json` are the bar for the CLI. A prose change does not mark one of them passed.
+MIT. Keep the copyright and license notice when redistributing. Contributions and public examples must be English and synthetic; do not publish credentials, private projects or raw user sessions.

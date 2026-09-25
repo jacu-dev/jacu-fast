@@ -1,2 +1,3 @@
-bin/jacu binary linguist-generated
-*.sh text eol=lf
+* text=auto
+bin/jacu text eol=lf
+runtimes/*/jacu binary

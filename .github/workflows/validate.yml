@@ -3,23 +3,64 @@ name: validate
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  manifests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Check manifests and skill frontmatter
-        run: |
-          python3 -m pip install --user jsonschema==4.25.1
-          python3 scripts/validate_manifests.py
   cli:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Run protocol tests
-        run: cargo test --locked
+        with:
+          persist-credentials: false
+      - name: Install the pinned compiler
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+      - name: Validate formatting and package structure
+        run: |
+          cargo fmt --all -- --check
+          python3 scripts/validate_manifests.py
+      - name: Exercise the actual compiled CLI
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          cargo test --locked 2>&1 | tee artifacts/cargo-test.txt
+          cargo build --release --locked
+          JACU_TEST_BIN="$PWD/target/release/jacu" python3 -m unittest discover -s tests -p 'test_*.py' -v 2>&1 | tee artifacts/python-test.txt
+      - name: Build metadata and check the packaged launcher
+        shell: bash
+        run: |
+          python3 scripts/build_metadata.py
+          python3 scripts/package_runtime.py --artifacts artifacts
+          python3 scripts/host.py doctor > artifacts/doctor.json
+          python3 -c 'import json; assert json.load(open("artifacts/doctor.json"))["mode"] == "runtime"'
+          bin/jacu capabilities
+      - name: Install the pinned Claude CLI and validate a clean plugin installation
+        shell: bash
+        run: |
+          npm install --global --no-audit --no-fund @anthropic-ai/claude-code@2.1.282
+          set -o pipefail
+          python3 scripts/test_claude_install.py 2>&1 | tee artifacts/claude-install.txt
+      - name: Record exact source
+        if: always()
+        run: |
+          mkdir -p artifacts
+          git archive --format=tar HEAD > artifacts/source.tar
+          git rev-parse HEAD > artifacts/commit.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: validation-${{ matrix.os }}
+          path: artifacts/
+          retention-days: 7

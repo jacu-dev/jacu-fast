@@ -1,43 +1,17 @@
 {
   "schema_version": 1,
-  "policy_id": "synthetic-rust-example",
-  "description": "Illustrative policy; the executor must implement and validate this schema.",
-  "semantic": {
-    "mode": "auto-existing",
-    "paid_fallback": false
-  },
   "checks": [
     {
       "id": "core-unit",
       "kind": "cargo-test",
       "program": "cargo",
-      "args": [
-        "test",
-        "--locked",
-        "-p",
-        "sample-core",
-        "--lib"
-      ],
-      "cwd": ".",
-      "timeout_seconds": 1800,
-      "minimum_tests": 1,
-      "reuse": "same-session-declared-inputs"
-    },
-    {
-      "id": "native-smoke",
-      "kind": "external",
-      "program": "./tests/native-smoke",
-      "args": [],
+      "args": ["test", "--locked", "--lib"],
       "cwd": ".",
       "timeout_seconds": 600,
+      "minimum_tests": 1,
       "reuse": "never",
-      "note": "Only executable in an already-trusted project with existing permission."
+      "inputs": []
     }
   ],
-  "delivery": {
-    "required_check_ids": [
-      "core-unit",
-      "native-smoke"
-    ]
-  }
+  "delivery": {"required_check_ids": ["core-unit"]}
 }
